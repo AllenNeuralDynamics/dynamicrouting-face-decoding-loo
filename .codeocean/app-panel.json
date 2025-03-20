@@ -3,7 +3,16 @@
 	"named_parameters": true,
 	"parameters": [
 		{
-			"id": "U7T2KRR0pLvyecUz",
+			"id": "x52gWS7EBuAj6nGG",
+			"name": "run_id",
+			"param_name": "run_id",
+			"description": "A unique string that should be attached to all decoding runs in the same batch - used for naming folders/files on S3",
+			"type": "text",
+			"value_type": "string",
+			"required": true
+		},
+		{
+			"id": "xxVUgdPR32dB7B9H",
 			"name": "session_id",
 			"param_name": "session_id",
 			"description": "Provide a single session ID \u003csubjectID\u003e_\u003cyyyy-mm-dd\u003e (default empty: run for all sessions in datacube)",
@@ -11,22 +20,40 @@
 			"value_type": "string"
 		},
 		{
-			"id": "CLnGBLMVID8fEr6b",
-			"name": "session_table_query",
-			"param_name": "session_table_query",
-			"description": "Query text to pass to df.query(), for filtering session_table (sessions excluded by filter are not processed)",
-			"type": "text",
-			"value_type": "string",
-			"default_value": "is_ephys \u0026 is_task \u0026 is_annotated \u0026 is_production \u0026 issues==\"[]'\""
-		},
-		{
-			"id": "HzuW2S8dqcVV1ML7",
+			"id": "rj6ETIWbYoQJsMqM",
 			"name": "logging_level",
 			"param_name": "logging_level",
 			"description": "DEBUG, INFO, WARNING, ERROR",
 			"type": "text",
 			"value_type": "string",
 			"default_value": "INFO"
+		},
+		{
+			"id": "CLnGBLMVID8fEr6c",
+			"name": "session_table_query",
+			"param_name": "session_table_query",
+			"description": "Query text to pass to df.query(), for filtering session_table (sessions excluded by filter are not processed)",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "is_ephys \u0026 is_task \u0026 is_annotated \u0026 is_production \u0026 issues=='[]'"
+		},
+		{
+			"id": "5Lq8N5fGlmWi7M3Z",
+			"name": "override_params_json",
+			"param_name": "override_params_json",
+			"description": "A json string of parameters to pass to Params class. Keys must be fields on Params class. Overrides values specified individually in App Builder",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "{}"
+		},
+		{
+			"id": "9zeS6i4cLxdwWiVC",
+			"name": "skip_existing",
+			"param_name": "skip_existing",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "1",
+			"maximum": 1
 		},
 		{
 			"id": "CKVquiTjW2bADhJk",
@@ -39,23 +66,30 @@
 			"maximum": 1
 		},
 		{
-			"id": "P5tTZI1ybbvI3uxI",
+			"id": "SwennXmUnO9E9T0D",
 			"name": "update_packages_from_source",
 			"param_name": "update_packages_from_source",
-			"description": "If 1, auto-updates package(s) (e.g. dynamic-routing-analysis) on each run. Disable for quicker testing",
+			"description": "If 1, auto-updates package(s) (e.g.  dynamic-routing-analysis) on each run. Disable for quicker testing",
 			"type": "text",
 			"value_type": "integer",
-			"default_value": "0",
+			"default_value": "1",
 			"maximum": 1
 		},
 		{
-			"id": "At3zc84Aj5tQRaAC",
-			"name": "override_params_json",
-			"param_name": "override_params_json",
-			"description": "A json string of parameters to pass to Params class. Keys must be fields on Params class. Overrides values specified individually in App Builder",
+			"id": "uxoZwW2rMVHw8rAt",
+			"name": "folder_name",
+			"param_name": "folder_name",
+			"description": "high level description of run to include in folder name",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "exDAGscNDd2rht1z",
+			"name": "decoder_type",
+			"param_name": "decoder_type",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "{}"
+			"default_value": "LogisticRegression"
 		}
 	]
 }
