@@ -131,7 +131,9 @@ class Params:
     run_id: str = ""
     """A unique string that should be attached to all decoding runs in the same batch"""
     # ----------------------------------------------------------------------------------
-
+    test: int = 0
+    skip_existing: int = 1
+    
     folder_name: str = "test"
     unit_criteria: str = 'medium'
     n_units: list = dataclasses.field(default_factory=lambda: [5, 10, 20, 30, 40, 50, 'all'])
@@ -271,7 +273,7 @@ def main():
     # run processing function for each session, with test mode implemented:
     for session_id in session_ids:
         try:
-            process_session(session_id, params=Params(**params | {'session_id': session_id}), test=args.test, skip_existing=args.skip_existing)
+            process_session(session_id, params=Params(**params | {'session_id': session_id, 'test': args.test, 'skip_existing':args.skip_existing}))
         except Exception as e:
             logger.exception(f'{session_id} | Failed:')
         else:

@@ -31,6 +31,8 @@ def decode_context_with_linear_shift(
                     params=params,
                     structure=structure,
                 )
+                if params.test:
+                    break
             for future in tqdm.tqdm(cf.as_completed(future_to_structure), total=len(future_to_structure), unit='structure', desc=f'decoding {session_id}'):
                 structure = future_to_structure[future]
                 structure_to_results[structure] = future.result()
@@ -50,6 +52,8 @@ def decode_context_with_linear_shift(
                 structure=structure,
             )
             structure_to_results[structure] = result
+            if params.test:
+                break
     return structure_to_results
 
 def wrap_decoder_helper(
@@ -115,5 +119,9 @@ def wrap_decoder_helper(
                 penalty=params.penalty,
                 solver=params.solver,
             )
+            if params.test:
+                break
         repeat_idx_to_results[repeat_idx] = shift_to_results
+        if params.test:
+            break
     return repeat_idx_to_results
