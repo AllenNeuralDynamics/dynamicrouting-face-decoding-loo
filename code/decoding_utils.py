@@ -15,13 +15,13 @@ def decode_context_with_linear_shift(
     session_id: str,
     params,
 ):
-    future_to_structure = {}
     structure_to_results = {}
     parallel = True
     # TODO add option to work on area + probe 
     # TODO add SC groupings
     if parallel:
         with cf.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn')) as executor:
+            future_to_structure = {}
             for structure in (
                 utils.get_df('units', lazy=True)
                 .filter(pl.col('session_id') == session_id)
@@ -30,12 +30,13 @@ def decode_context_with_linear_shift(
                 ['structure']
                 .unique()
             ):
-                executor.submit(
+                future = executor.submit(
                     wrap_decoder_helper,
                     session_id=session_id,
                     params=params,
                     structure=structure,
                 )
+                future_to_structure[future] = structure
                 logger.info(f"Submitted decoding to process pool for session {session_id}, structure {structure}")
                 if params.test:
                     break
