@@ -92,7 +92,7 @@ def process_session(session_id: str, params: "Params") -> None:
     if params.test:
         params.folder_name = f"test/{params.folder_name}"
         params.only_use_all_units = True
-        params.n_units = ["all"]
+        params.n_units = 20
         params.keep_n_SVDs = 5
         params.LP_parts_to_keep = ["ear_base_l"]
         params.n_repeats = 1

@@ -70,7 +70,6 @@ def wrap_decoder_helper(
 ):
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     
-    # get df len == n_units x n_trials, with spike counts in a column
     spike_counts_df = utils.get_per_trial_spike_times(
         starts=pl.col('stim_start_time') - 0.2,
         ends=pl.col('stim_start_time'),
@@ -84,7 +83,7 @@ def wrap_decoder_helper(
             ['unit_id']
             .unique()
         ),
-    )
+    ) # len == n_units x n_trials, with spike counts in a column
     logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
     
     spike_counts_array = (
@@ -119,7 +118,7 @@ def wrap_decoder_helper(
     repeat_idx_to_results = {}
     for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
         shift_to_results = {}
-        sel_units = np.random.choice(np.arange(unit_ids), params.n_units, replace=False)
+        sel_units = np.random.choice(np.arange(0, len(unit_ids)), params.n_units, replace=False)
         logger.debug(f"Repeat {repeat_idx}: selected {len(sel_units)} units")
         
         for shift in shifts:
