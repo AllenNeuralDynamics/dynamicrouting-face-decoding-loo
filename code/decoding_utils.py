@@ -2,6 +2,7 @@ import concurrent.futures as cf
 
 import math
 import polars as pl
+import tqdm
 import utils
 from dynamic_routing_analysis.decoding_utils import decoder_helper
 import numpy as np
@@ -30,7 +31,7 @@ def decode_context_with_linear_shift(
                     params=params,
                     structure=structure,
                 )
-            for future in cf.as_completed(future_to_structure):
+            for future in tqdm.tqdm(cf.as_completed(future_to_structure), total=len(future_to_structure), unit='structure', desc=f'decoding {session_id}'):
                 structure = future_to_structure[future]
                 structure_to_results[structure] = future.result()
     else:
@@ -98,7 +99,7 @@ def wrap_decoder_helper(
     shifts= tuple(range(-neg, pos+1))
     
     repeat_idx_to_results = {}
-    for repeat_idx in params.n_repeats:
+    for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
         shift_to_results = {}
         sel_units=np.random.choice(np.arange(unit_ids), params.n_units, replace=False)
         for shift in shifts:
