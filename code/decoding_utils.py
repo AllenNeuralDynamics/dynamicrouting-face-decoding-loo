@@ -1,4 +1,5 @@
 import concurrent.futures as cf
+import multiprocessing
 
 import math
 import polars as pl
@@ -15,8 +16,10 @@ def decode_context_with_linear_shift(
     future_to_structure = {}
     structure_to_results = {}
     parallel = True
+    # TODO add option to work on area + probe 
+    # TODO add SC groupings
     if parallel:
-        with cf.ProcessPoolExecutor() as executor:
+        with cf.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn')) as executor:
             for structure in (
                 utils.get_df('units', lazy=True)
                 .filter(pl.col('session_id') == session_id)
@@ -61,6 +64,7 @@ def wrap_decoder_helper(
     params,
     structure: str,
 ):
+    # TODO add option to do no shift/selection of middle blocks
     # get df len == n_units x n_trials, with spike counts in a column
     spike_counts_df = utils.get_per_trial_spike_times(
         starts=pl.col('stim_start_time') - 0.2,
