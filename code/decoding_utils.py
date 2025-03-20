@@ -96,7 +96,7 @@ def wrap_decoder_helper(
     )
     logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
     
-    unit_ids = spike_counts_df['unit_id'].sort()
+    unit_ids = spike_counts_df['unit_id'].unique().sort()
     trials = (
         utils.get_df('trials', lazy=True)
         .filter(pl.col('session_id') == session_id)
