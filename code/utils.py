@@ -33,7 +33,7 @@ import pynwb
 import tqdm
 import upath
 import zarr
-from polars.typing_ import FrameType
+import polars._typing
 
 import numba_psth
 
@@ -142,12 +142,21 @@ def setup_logging(
 def get_session_table() -> pl.DataFrame:
     return pl.read_parquet(get_datacube_dir() / 'session_table.parquet')
     
-def get_df(component: str, lazy: bool = True) -> FrameType:
+    
+@typing.overload
+def get_df(component: str, lazy: bool = False) ->  pl.DataFrame:
+    ...
+    
+@typing.overload
+def get_df(component: str, lazy: bool = True) ->  pl.LazyFrame:
+    ...
+    
+def get_df(component: str, lazy: bool) -> pl.DataFrame | pl.LazyFrame:
     path = get_datacube_dir() / 'consolidated' / f'{component}.parquet'
     if lazy:
         frame = pl.scan_parquet(path)
     else:
-        frame = pl.read_parquet(path)
+        frame = pl.read_parquet(path) # type: ignore
     return (
         frame
         .with_columns(

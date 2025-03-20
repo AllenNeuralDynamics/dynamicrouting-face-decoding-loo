@@ -21,11 +21,12 @@ import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import sklearn
+import polars as pl
 import pynwb
 import upath
 import zarr
-from dynamic_routing_analysis import spike_utils, decoding_utils, data_utils, path_utils
 
+import decoding_utils
 import utils
 
 # logging configuration -------------------------------------------- #
@@ -80,26 +81,15 @@ def parse_args() -> argparse.Namespace:
 # processing function ---------------------------------------------- #
 # modify the body of this function, but keep the same signature
 
-def process_session(session_id: str, params: "Params", test: int = 0, skip_existing: bool = False) -> None:
+def process_session(session_id: str, params: "Params") -> None:
     """Process a single session with parameters defined in `params` and save results + params to
     /results.
     
     A test mode should be implemented to allow for quick testing of the capsule (required every time
     a change is made if the capsule is in a pipeline) 
     """
-    # Get nwb file
-    # Currently this can fail for two reasons: 
-    # - the file is missing from the datacube, or we have the path to the datacube wrong (raises a FileNotFoundError)
-    # - the file is corrupted due to a bad write (raises a RecursionError)
-    # Choose how to handle these as appropriate for your capsule
 
-    try:
-        session = utils.get_nwb(session_id, raise_on_missing=True, raise_on_bad_file=True) 
-    except (FileNotFoundError, RecursionError) as exc:
-        logger.info(f"Skipping {session_id}: {exc!r}")
-        return
-    
-    if test:
+    if params.test:
         params.folder_name = f"test/{params.folder_name}"
         params.only_use_all_units = True
         params.n_units = ["all"]
@@ -109,78 +99,13 @@ def process_session(session_id: str, params: "Params", test: int = 0, skip_exist
         params.n_unit_threshold = 5
         logger.info(f"Test mode: using modified set of parameters")
 
-    if skip_existing and params.file_path.exists():
+    if params.skip_existing and params.file_path.exists():
         logger.info(f"{params.file_path} exists: processing skipped")
         return
     
-    # Get components from the nwb file:
-    trials = session.trials[:]
-    if 'recalc' in params.unit_criteria:
-        recalc_path='/data/dynamicrouting_unit_metrics_recalculated/units_with_recalc_metrics.csv'
-        recalculated_unit_metrics = pd.read_csv(recalc_path)
-        sel_units = recalculated_unit_metrics.query(params.units_query)['unit_id'].tolist()
-
-        units = session.units[:].query("unit_id in @sel_units")
-
-    else:
-        units = session.units[:].query(params.units_query)
-
-    if params.select_single_area is not None:
-        units = units.query('structure==@params.select_single_area')
-        if len(units)==0:
-            logger.error(f"Structure does not exist in session; skipping")
-            return
-
-    if test:
-        logger.info(f"Test mode: using reduced set of units")
-        units = units.sort_values('location').head(20)
-
-    #units: pd.DataFrame =  utils.remove_pynwb_containers_from_table(units[:])
-    units['session_id'] = session_id
-    units.drop(columns=['waveform_sd','waveform_mean'], inplace=True, errors='ignore')
-
-    cols_to_keep=['unit_id','session_id','structure','electrode_group_name','spike_times','ccf_ap', 'ccf_dv', 'ccf_ml']
-    units=units[cols_to_keep]
-
     logger.info(f'starting decode_context_with_linear_shift for {session_id} with {params.to_json()}')
 
-    decoding_utils.decode_context_with_linear_shift(session=session,params=params.to_dict(),trials=trials,units=units)
-
-    del units
-    del trials
-    del session
-    gc.collect()
-
-    logger.info(f'making summary tables of decoding results for {session_id}')
-    decoding_results = decoding_utils.concat_decoder_results(
-        files=[params.file_path],
-        savepath=params.savepath,
-        return_table=True,
-        single_session=True,
-    )
-    #find n_units to loop through for next step
-    #print(decoding_results)
-    if decoding_results is not None:
-        n_units = []
-        for col in decoding_results.filter(like='true_accuracy_').columns.values:
-            if len(col.split('_'))==3:
-                temp_n_units=col.split('_')[2]
-                try:
-                    n_units.append(int(temp_n_units))
-                except:
-                    n_units.append(temp_n_units)
-            else:
-                n_units.append(None)
-
-        decoding_results = []
-        for nu in n_units:
-            decoding_utils.concat_trialwise_decoder_results(
-                files=[params.file_path],
-                savepath=params.savepath,
-                return_table=False,
-                n_units=nu,
-                single_session=True,
-            )
+    decoding_utils.decode_context_with_linear_shift(session_id=session_id,params=params)
 
     logger.info(f'{session_id} | Writing params file')
     params.write_json(params.file_path.with_suffix('.json'))
@@ -252,7 +177,7 @@ class Params:
 
     @property
     def savepath(self) -> upath.UPath:
-        return path_utils.DECODING_ROOT_PATH / f"{self.folder_name}_{self.run_id}" 
+        return upath.UPath("s3://aind-scratch-data/dynamic-routing/ethan/decoding-results") / f"{self.folder_name}_{self.run_id}" 
 
     @property
     def filename(self) -> str:
@@ -263,23 +188,24 @@ class Params:
         return self.savepath / self.filename
     
     @property
-    def units_query(self) -> str:
+    def units_query(self) -> pl.Expr:
+        
         if self.unit_criteria == 'medium':
-            return 'isi_violations_ratio<=0.5 and presence_ratio>=0.9 and amplitude_cutoff<=0.1'
+            return (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'strict':
-            return 'isi_violations_ratio<=0.1 and presence_ratio>=0.99 and amplitude_cutoff<=0.1'
+            return (pl.col('isi_violations_ratio') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'use_sliding_rp':
-            return 'sliding_rp_violation<=0.1 and presence_ratio>=0.99 and amplitude_cutoff<=0.1'
+            return (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'recalc_presence_ratio':
-            return 'sliding_rp_violation<=0.1 and presence_ratio_task>=0.99 and amplitude_cutoff<=0.1'
+            return (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio_task') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'no_drift':
-            return 'decoder_label!="noise" and isi_violations_ratio<=0.5 and presence_ratio>=0.7 and amplitude_cutoff<=0.1'
+            return (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'loose_drift':
-            return 'activity_drift<=0.2 and decoder_label!="noise" and isi_violations_ratio<=0.5 and presence_ratio>=0.7 and amplitude_cutoff<=0.1'
+            return (pl.col('activity_drift') <= 0.2) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'medium_drift':
-            return 'activity_drift<=0.15 and decoder_label!="noise" and isi_violations_ratio<=0.5 and presence_ratio>=0.7 and amplitude_cutoff<=0.1'
+            return (pl.col('activity_drift') <= 0.15) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'strict_drift':
-            return 'activity_drift<=0.1 and decoder_label!="noise" and isi_violations_ratio<=0.5 and presence_ratio>=0.7 and amplitude_cutoff<=0.1'
+            return (pl.col('activity_drift') <= 0.1) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
         else:
             raise ValueError(f"No units query available for {self.unit_criteria=!r}")
 
