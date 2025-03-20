@@ -10,6 +10,7 @@ import json
 import functools
 import logging
 import logging.handlers
+import multiprocessing
 import os
 import pathlib
 import sys
@@ -144,15 +145,16 @@ def get_session_table() -> pl.DataFrame:
     
     
 @typing.overload
-def get_df(component: str, lazy: bool = False) ->  pl.DataFrame:
+def get_df(component: str, lazy: Literal[False] = False) ->  pl.DataFrame:
     ...
     
 @typing.overload
-def get_df(component: str, lazy: bool = True) ->  pl.LazyFrame:
+def get_df(component: str, lazy: Literal[True] = True) ->  pl.LazyFrame:
     ...
     
-def get_df(component: str, lazy: bool) -> pl.DataFrame | pl.LazyFrame:
+def get_df(component: str, lazy: bool = False) -> pl.DataFrame | pl.LazyFrame:
     path = get_datacube_dir() / 'consolidated' / f'{component}.parquet'
+    frame: pl.DataFrame | pl.LazyFrame
     if lazy:
         frame = pl.scan_parquet(path)
     else:
