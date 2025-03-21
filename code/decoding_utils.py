@@ -25,7 +25,7 @@ def decode_context_with_linear_shift(
             pl.col('session_id') == session_id,
             # only use areas with at least n_units (cannot random sample without replacement 
             # if we have less than n_units):
-            pl.col('unit_id').len().ge(params.n_units).over('structure'),    
+            pl.col('unit_id').n_unique().ge(params.n_units).over('session_id', 'structure'),    
         )
     )
     structures = units.select('structure').collect()['structure'].unique().sort()
