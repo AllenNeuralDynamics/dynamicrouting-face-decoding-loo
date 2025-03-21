@@ -136,7 +136,7 @@ class Params:
     
     folder_name: str = "test"
     unit_criteria: str = 'medium'
-    n_units: list = dataclasses.field(default_factory=lambda: [5, 10, 20, 30, 40, 50, 'all'])
+    n_units: int = 20
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""

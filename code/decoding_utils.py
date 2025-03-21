@@ -1,13 +1,13 @@
 import concurrent.futures as cf
 import logging
+import math
 import multiprocessing
 
-import math
+import numpy as np
 import polars as pl
 import tqdm
 import utils
 from dynamic_routing_analysis.decoding_utils import decoder_helper
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,20 @@ def decode_context_with_linear_shift(
     parallel = True
     # TODO add option to work on area + probe 
     # TODO add SC groupings
+    units = (
+        utils.get_df('units', lazy=True)
+        .filter(
+            pl.col('session_id') == session_id,
+            # only use areas with at least n_units (cannot random sample without replacement 
+            # if we have less than n_units):
+            pl.col('unit_id').len().ge(params.n_units).over('structure'),    
+        )
+    )
     if parallel:
         with cf.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn')) as executor:
             future_to_structure = {}
             for structure in (
-                utils.get_df('units', lazy=True)
-                .filter(pl.col('session_id') == session_id)
+                units
                 .select('structure')
                 .collect()
                 ['structure']
@@ -46,8 +54,7 @@ def decode_context_with_linear_shift(
     else:
         
         for structure in (
-            utils.get_df('units', lazy=True)
-            .filter(pl.col('session_id') == session_id)
+            units
             .select('structure')
             .collect()
             ['structure']
@@ -116,13 +123,26 @@ def wrap_decoder_helper(
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
     repeat_idx_to_results = {}
-    for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
+    # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
+    # get the min number of repeats possible to avoid unnecessary work:
+    n_repeats = min(params.n_repeats, len(unit_ids) - params.n_units)
+    if n_repeats != params.n_repeats:
+        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=})")
+    unit_samples: list[set[int]] = []
+    for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
         shift_to_results = {}
-        sel_units = np.random.choice(np.arange(0, len(unit_ids)), params.n_units, replace=False)
+        
+        # ensure we don't sample the same set of units twice
+        while True:
+            sel_units = set(np.random.choice(np.arange(0, len(unit_ids)), params.n_units, replace=False))
+            if sel_units not in unit_samples:
+                unit_samples.append(sel_units)
+                break
+            
         logger.debug(f"Repeat {repeat_idx}: selected {len(sel_units)} units")
         
         for shift in shifts:
-            data = spike_counts_array[neg+shift: -pos+shift, sel_units]
+            data = spike_counts_array[neg+shift: -pos+shift, list(sel_units)]
             logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
             
             shift_to_results[shift] = decoder_helper(
