@@ -23,6 +23,9 @@ def decode_context_with_linear_shift(
     units = (
         utils.get_df('units', lazy=True)
         .filter(
+            params.units_query,
+        )
+        .filter(
             pl.col('session_id') == session_id,
             # only use areas with at least n_units (cannot random sample without replacement 
             # if we have less than n_units):
@@ -77,6 +80,7 @@ def wrap_decoder_helper(
             .filter(
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
+                params.unit_query,
             )
             .select('unit_id')
             .collect()
