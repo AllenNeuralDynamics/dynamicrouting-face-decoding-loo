@@ -143,8 +143,9 @@ def wrap_decoder_helper(
         
         for shift in shifts:
             first_trial_index = neg + shift
-            assert first_trial_index >= 0, f"{first_trial_index=}"
             last_trial_index = -pos + shift
+            assert first_trial_index >= 0, f"{first_trial_index=}"
+            assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
             assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
             data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_units)]
             assert data.shape == (len(labels), len(sel_units)), f"{data.shape=}, {len(labels)=}, {len(sel_units)=}"
