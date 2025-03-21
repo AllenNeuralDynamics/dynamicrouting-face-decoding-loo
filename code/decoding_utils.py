@@ -28,16 +28,11 @@ def decode_context_with_linear_shift(
             pl.col('unit_id').len().ge(params.n_units).over('structure'),    
         )
     )
+    structures = units.select('structure').collect()['structure'].unique().sort()
     if parallel:
         with cf.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn')) as executor:
             future_to_structure = {}
-            for structure in (
-                units
-                .select('structure')
-                .collect()
-                ['structure']
-                .unique()
-            ):
+            for structure in structures:
                 future = executor.submit(
                     wrap_decoder_helper,
                     session_id=session_id,
@@ -53,13 +48,7 @@ def decode_context_with_linear_shift(
                 structure_to_results[structure] = future.result()
     else:
         
-        for structure in (
-            units
-            .select('structure')
-            .collect()
-            ['structure']
-            .unique()
-        ):
+        for structure in structures:
             result = wrap_decoder_helper(
                 session_id=session_id,
                 params=params,
@@ -125,14 +114,17 @@ def wrap_decoder_helper(
     repeat_idx_to_results = {}
     # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
     # get the min number of repeats possible to avoid unnecessary work:
-    n_repeats = min(params.n_repeats, len(unit_ids) - params.n_units)
-    if n_repeats != params.n_repeats:
+    n_possible_samples = math.comb(len(unit_ids), params.n_units)
+    if params.repeats > n_possible_samples:
+        n_repeats = n_possible_samples
         logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=})")
+    else:
+        n_repeats = params.n_repeats
     unit_samples: list[set[int]] = []
     for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
         shift_to_results = {}
         
-        # ensure we don't sample the same set of units twice
+        # ensure we don't sample the same set of units twice when we have few units:
         while True:
             sel_units = set(np.random.choice(np.arange(0, len(unit_ids)), params.n_units, replace=False))
             if sel_units not in unit_samples:
