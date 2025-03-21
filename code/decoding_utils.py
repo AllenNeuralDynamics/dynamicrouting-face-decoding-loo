@@ -80,7 +80,7 @@ def wrap_decoder_helper(
             .filter(
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                params.unit_query,
+                params.units_query,
             )
             .select('unit_id')
             .collect()
