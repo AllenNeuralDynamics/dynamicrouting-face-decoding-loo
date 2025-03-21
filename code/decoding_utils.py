@@ -6,10 +6,12 @@ import multiprocessing
 import numpy as np
 import polars as pl
 import tqdm
-import utils
 from dynamic_routing_analysis.decoding_utils import decoder_helper
 
+import utils
+
 logger = logging.getLogger(__name__)
+utils.setup_logging()
 
 def decode_context_with_linear_shift(
     session_id: str,
