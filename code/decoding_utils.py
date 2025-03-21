@@ -69,7 +69,7 @@ def wrap_decoder_helper(
     
     spike_counts_df = utils.get_per_trial_spike_times(
         intervals={
-            'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_end_time')),
+            'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_start_time')),
         },
         as_counts=True,
         unit_ids=(
