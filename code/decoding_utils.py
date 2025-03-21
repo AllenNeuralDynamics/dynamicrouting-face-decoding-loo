@@ -143,7 +143,8 @@ def wrap_decoder_helper(
         
         for shift in shifts:
             first_trial_index = neg + shift
-            last_trial_index = -pos + shift
+            last_trial_index = len(trials) - pos + shift
+            logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
             assert first_trial_index >= 0, f"{first_trial_index=}"
             assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
             assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
