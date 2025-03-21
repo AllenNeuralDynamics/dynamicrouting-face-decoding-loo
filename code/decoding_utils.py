@@ -139,11 +139,11 @@ def wrap_decoder_helper(
         
         for shift in shifts:
             first_trial_index = neg + shift
-            assert first_trial_index >= 0
+            assert first_trial_index >= 0, f"{first_trial_index=}"
             last_trial_index = -pos + shift
-            assert last_trial_index <= spike_counts_array.shape[0]
+            assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
             data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_units)]
-            assert data.shape == (len(labels), len(sel_units))
+            assert data.shape == (len(labels), len(sel_units)), f"{data.shape=}, {len(labels)=}, {len(sel_units)=}"
             logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
             
             shift_to_results[shift] = decoder_helper(
