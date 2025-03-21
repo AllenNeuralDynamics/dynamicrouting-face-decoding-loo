@@ -11,7 +11,6 @@ from dynamic_routing_analysis.decoding_utils import decoder_helper
 import utils
 
 logger = logging.getLogger(__name__)
-utils.setup_logging()
 
 def decode_context_with_linear_shift(
     session_id: str,
@@ -27,7 +26,7 @@ def decode_context_with_linear_shift(
             pl.col('session_id') == session_id,
             # only use areas with at least n_units (cannot random sample without replacement 
             # if we have less than n_units):
-            pl.col('unit_id').n_unique().ge(params.n_units).over('session_id', 'structure'),    
+            pl.col('unit_id').n_unique().ge(params.n_units).over('session_id', 'structure'), # TODO optionally add electrode_group 
         )
     )
     structures = units.select('structure').collect()['structure'].unique().sort()
@@ -72,10 +71,13 @@ def wrap_decoder_helper(
         starts=pl.col('stim_start_time') - 0.2,
         ends=pl.col('stim_start_time'),
         col_names='n_spikes',
+        as_counts=True,
         unit_ids=(
             utils.get_df('units', lazy=True)
-            .filter(pl.col('session_id') == session_id)
-            .filter(pl.col('structure') == structure)
+            .filter(
+                pl.col('session_id') == session_id,
+                pl.col('structure') == structure,
+            )
             .select('unit_id')
             .collect()
             ['unit_id']
