@@ -115,7 +115,7 @@ def wrap_decoder_helper(
     # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
     # get the min number of repeats possible to avoid unnecessary work:
     n_possible_samples = math.comb(len(unit_ids), params.n_units)
-    if params.repeats > n_possible_samples:
+    if params.n_repeats > n_possible_samples:
         n_repeats = n_possible_samples
         logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=})")
     else:
