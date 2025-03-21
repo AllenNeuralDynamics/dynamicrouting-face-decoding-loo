@@ -68,9 +68,9 @@ def wrap_decoder_helper(
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     
     spike_counts_df = utils.get_per_trial_spike_times(
-        starts=pl.col('stim_start_time') - 0.2,
-        ends=pl.col('stim_start_time'),
-        col_names='n_spikes',
+        intervals={
+            'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_end_time')),
+        },
         as_counts=True,
         unit_ids=(
             utils.get_df('units', lazy=True)
@@ -89,7 +89,7 @@ def wrap_decoder_helper(
     spike_counts_array = (
         spike_counts_df
         .sort('trial_index', 'unit_id')
-        .select('n_spikes')
+        .select('n_spikes_baseline')
         .to_numpy()
         .squeeze()
         .reshape(spike_counts_df.n_unique('trial_index'), spike_counts_df.n_unique('unit_id'))

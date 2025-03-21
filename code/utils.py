@@ -19,7 +19,7 @@ import types
 import typing
 import uuid
 import zoneinfo
-from typing import Any, Generator, Iterable, Literal
+from typing import Any, Generator, Iterable, Literal, Sequence
 
 # 3rd-party imports necessary for processing ----------------------- #
 import h5py
@@ -352,9 +352,7 @@ def insert_is_observed(
     return intervals_lf.collect()
 
 def get_per_trial_spike_times(
-    starts: pl.Expr | Iterable[pl.Expr],
-    ends: pl.Expr | Iterable[pl.Expr],
-    col_names: str | Iterable[str] = "n_spikes",
+    intervals: dict[str, tuple[pl.Expr, pl.Expr]],
     session_id: str | None = None,
     unit_ids: Iterable[str] | None = None,
     trials_frame: str | polars._typing.FrameType = 'trials', 
@@ -376,16 +374,6 @@ def get_per_trial_spike_times(
             unit_ids = tuple(unit_ids)
         units_df = get_df('units').select(units_df_cols).filter(pl.col('unit_id').is_in(unit_ids))
     
-    if isinstance(starts, pl.Expr):
-        starts = (starts,)
-    if isinstance(ends, pl.Expr):
-        ends = (ends,)
-    if isinstance(col_names, str):
-        col_names = (col_names,)
-    if len(set(col_names)) != len(col_names):
-        raise ValueError("col_names must be unique")
-    if len(starts) != len(ends) != len(col_names):
-        raise ValueError("starts, ends, and col_names must have the same length")
     if isinstance(trials_frame, str):
         trials_df = get_df(trials_frame)
     trials_df = (
@@ -394,7 +382,7 @@ def get_per_trial_spike_times(
     )
     # temp add columns for each interval with type list[float] (start, end)
     temp_col_prefix = "__temp_interval"
-    for (start, end, col_name) in zip(starts, ends, col_names):
+    for col_name, (start, end) in intervals.items():
         trials_df = (
             trials_df
             .with_columns(
@@ -411,7 +399,7 @@ def get_per_trial_spike_times(
         # session_id can be derived from unit_id
         'trial_index': [],
     }
-    for col_name in col_names:
+    for col_name in intervals.keys():
         results[col_name] = []
     
     for (session_id, *_), session_trials in trials_df.group_by(pl.col('session_id')):
@@ -423,7 +411,7 @@ def get_per_trial_spike_times(
                 raise ValueError(f"Missing unit_id in {row=}")
             results['unit_id'].extend([row['unit_id']] * len(session_trials))
             
-            for (start, end, col_name) in zip(starts, ends, col_names):
+            for col_name, (start, end) in intervals.items():
                 # get spike times with start:end interval for each row of the trials table
                 spike_times = spike_times_all_units[row['unit_id']]
                 spikes_in_intervals: list[list[float]] | list[float] = []
@@ -463,12 +451,12 @@ def get_per_trial_spike_times(
             .with_columns(
                 *[
                     pl.when(pl.col('is_observed').not_()).then(pl.lit(None)).otherwise(pl.col(col_name)).alias(col_name)
-                    for col_name in col_names
+                    for col_name in intervals
                 ]
             )
         )
         if keep_only_necessary_cols:
-            results_df = results_df.drop(pl.all().exclude('unit_id', 'trial_index', *col_names))
+            results_df = results_df.drop(pl.all().exclude('unit_id', 'trial_index', *intervals.keys()))
 
     return results_df
 # analysis ----------------------------------------------------------- #
