@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 def decode_context_with_linear_shift(
     session_id: str,
     params,
+    parallel: bool = True,
 ):
     structure_to_results = {}
-    parallel = True
     # TODO add option to work on area + probe 
     # TODO add SC groupings
     units = (
@@ -52,7 +52,7 @@ def decode_context_with_linear_shift(
                 structure_to_results[structure] = future.result()
     else:
         
-        for structure in structures:
+        for structure in tqdm.tqdm(structures, unit='structure', desc=f'decoding {session_id}'):
             result = wrap_decoder_helper(
                 session_id=session_id,
                 params=params,
@@ -163,6 +163,7 @@ def wrap_decoder_helper(
                 regularization=params.regularization,
                 penalty=params.penalty,
                 solver=params.solver,
+                n_jobs=params.n_jobs
             )
             if params.test:
                 break

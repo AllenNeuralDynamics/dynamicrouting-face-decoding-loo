@@ -1,4 +1,4 @@
-# hash:sha256:3b207b70d7d8eee99f4b38900f3e9fbf1464d62c214f826dfcceef9794650d3d
+# hash:sha256:f6063cd15d0597e36bdd06bbda3f76fa44a05e79b7a72db4971be9db40111e02
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -7,6 +7,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
+
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

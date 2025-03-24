@@ -69,5 +69,19 @@
 			"options": {},
 			"pre_install_options": {}
 		}
-	}
+	},
+	"env_variables": [
+		{
+			"name": "OMP_NUM_THREADS",
+			"value": "1"
+		},
+		{
+			"name": "MKL_NUM_THREADS",
+			"value": "1"
+		},
+		{
+			"name": "OPENBLAS_NUM_THREADS",
+			"value": "1"
+		}
+	]
 }

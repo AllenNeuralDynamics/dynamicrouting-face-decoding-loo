@@ -105,7 +105,7 @@ def process_session(session_id: str, params: "Params") -> None:
     
     logger.info(f'starting decode_context_with_linear_shift for {session_id} with {params.to_json()}')
 
-    decoding_utils.decode_context_with_linear_shift(session_id=session_id,params=params)
+    decoding_utils.decode_context_with_linear_shift(session_id=session_id,params=params, parallel=True)
 
     logger.info(f'{session_id} | Writing params file')
     params.write_json(params.file_path.with_suffix('.json'))
@@ -176,6 +176,8 @@ class Params:
     """ select a single area to run decoding analysis on. If None, run on all areas """
     split_area_by_probe: int = 1
     """ splits area units by probe if recorded by more than one probe"""
+    n_jobs: int = None
+    """ scikit-learn parameter for parallelization """
 
     @property
     def savepath(self) -> upath.UPath:
