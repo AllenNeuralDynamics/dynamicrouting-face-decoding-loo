@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 def decode_context_with_linear_shift(
     session_id: str,
     params,
-    parallel: bool = True,
 ):
     structure_to_results = {}
     # TODO add option to work on area + probe 
@@ -33,8 +32,8 @@ def decode_context_with_linear_shift(
         )
     )
     structures = units.select('structure').collect()['structure'].unique().sort()
-    if parallel:
-        with cf.ProcessPoolExecutor(mp_context=multiprocessing.get_context('spawn')) as executor:
+    if params.use_process_pool:
+        with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('spawn')) as executor:
             future_to_structure = {}
             for structure in structures:
                 future = executor.submit(

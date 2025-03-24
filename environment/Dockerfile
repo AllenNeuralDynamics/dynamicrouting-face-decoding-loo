@@ -1,4 +1,4 @@
-# hash:sha256:f6063cd15d0597e36bdd06bbda3f76fa44a05e79b7a72db4971be9db40111e02
+# hash:sha256:93df5b660b37a5a1a7de912802cf7ce376748a699146b1181bd8992a740e4cd2
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -8,9 +8,9 @@ ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
 
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
-ENV OPENBLAS_NUM_THREADS=1
+ENV OMP_NUM_THREADS=3
+ENV MKL_NUM_THREADS=3
+ENV OPENBLAS_NUM_THREADS=3
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -29,4 +29,4 @@ RUN pip3 install -U --no-cache-dir \
     scikit-learn==1.5.2 \
     universal-pathlib==0.1.4 \
     zarr==2.17.2 \
-    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@2b9de9816bad250a69d2b6301ecce5c5ec7a1e08#egg=dynamic-routing-analysis
+    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@5f8121f48fa05deaf8acfa5964e2f8e39703d1e3#egg=dynamic-routing-analysis

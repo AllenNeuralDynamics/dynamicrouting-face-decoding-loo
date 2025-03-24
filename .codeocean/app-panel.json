@@ -90,6 +90,29 @@
 			"type": "text",
 			"value_type": "string",
 			"default_value": "LogisticRegression"
+		},
+		{
+			"id": "mEO7YbVSqdrSMD9O",
+			"name": "use_process_pool",
+			"param_name": "use_process_pool",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "1",
+			"maximum": 1
+		},
+		{
+			"id": "RRWkAt4rHoxQdIYU",
+			"name": "max_workers",
+			"param_name": "max_workers",
+			"type": "text",
+			"value_type": "integer"
+		},
+		{
+			"id": "QGCJSR6IiJRCG44R",
+			"name": "n_jobs",
+			"param_name": "n_jobs",
+			"type": "text",
+			"value_type": "integer"
 		}
 	]
 }

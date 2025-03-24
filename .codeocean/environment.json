@@ -27,7 +27,7 @@
 				},
 				{
 					"name": "git+https://github.com/AllenInstitute/dynamic_routing_analysis#egg=dynamic-routing-analysis",
-					"version": "2b9de9816bad250a69d2b6301ecce5c5ec7a1e08"
+					"version": "5f8121f48fa05deaf8acfa5964e2f8e39703d1e3"
 				},
 				{
 					"name": "hdmf",
@@ -73,15 +73,15 @@
 	"env_variables": [
 		{
 			"name": "OMP_NUM_THREADS",
-			"value": "1"
+			"value": "3"
 		},
 		{
 			"name": "MKL_NUM_THREADS",
-			"value": "1"
+			"value": "3"
 		},
 		{
 			"name": "OPENBLAS_NUM_THREADS",
-			"value": "1"
+			"value": "3"
 		}
 	]
 }
