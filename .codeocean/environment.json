@@ -73,15 +73,15 @@
 	"env_variables": [
 		{
 			"name": "OMP_NUM_THREADS",
-			"value": "3"
+			"value": "1"
 		},
 		{
 			"name": "MKL_NUM_THREADS",
-			"value": "3"
+			"value": "1"
 		},
 		{
 			"name": "OPENBLAS_NUM_THREADS",
-			"value": "3"
+			"value": "1"
 		}
 	]
 }
