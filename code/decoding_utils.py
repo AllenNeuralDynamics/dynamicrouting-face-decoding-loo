@@ -152,12 +152,13 @@ def wrap_decoder_helper(
             ['unit_id']
             .unique()
         ),
-    ) # len == n_units x n_trials, with spike counts in a column
+    ).sort('trial_index', 'unit_id') # len == n_units x n_trials, with spike counts in a column
+    # sequence of unit_ids is used later: don't re-sort!
+    
     logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
     
     spike_counts_array = (
         spike_counts_df
-        .sort('trial_index', 'unit_id')
         .select('n_spikes_baseline')
         .to_numpy()
         .squeeze()
@@ -165,7 +166,7 @@ def wrap_decoder_helper(
     )
     logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
     
-    unit_ids = spike_counts_df['unit_id'].unique().sort()
+    unit_ids = spike_counts_df['unit_id'].unique()
     trials = (
         utils.get_df('trials', lazy=True)
         .filter(pl.col('session_id') == session_id)
@@ -233,6 +234,8 @@ def wrap_decoder_helper(
             result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
             result['shift_idx'] = shift
             result['repeat_idx'] = repeat_idx
+            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+            result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_units)].tolist()
             results.append(result)
             if params.test:
                 break
