@@ -73,7 +73,7 @@ def decode_context_with_linear_shift(
         .unique(params.units_group_by)
         .collect()
     )
-
+    logger.info(f"Processing {len(areas)} unique session/area/probe combinations")
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
