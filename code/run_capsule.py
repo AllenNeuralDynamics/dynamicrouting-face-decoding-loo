@@ -115,7 +115,7 @@ class Params(pydantic_settings.BaseSettings):
 
     @pydantic.computed_field(repr=False)
     @property
-    def units_group_by(self) -> list[pl.Expr]:
+    def units_group_by(self) -> list[Expr]:
         if self.split_area_by_probe:
             return [pl.col('session_id'), pl.col('structure'), pl.col('electrode_group_name')]
         else:
@@ -123,7 +123,7 @@ class Params(pydantic_settings.BaseSettings):
     
     @pydantic.computed_field(repr=False)
     @property
-    def units_query(self) -> pl.Expr:
+    def units_query(self) -> Expr:
         
         if self.unit_criteria == 'medium':
             return (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1)
