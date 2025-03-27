@@ -113,13 +113,13 @@ class Params(pydantic_settings.BaseSettings):
         elif self.unit_criteria == 'recalc_presence_ratio':
             return (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio_task') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'no_drift':
-            return (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
+            return (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'loose_drift':
-            return (pl.col('activity_drift') <= 0.2) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
+            return (pl.col('activity_drift') <= 0.2) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'medium_drift':
-            return (pl.col('activity_drift') <= 0.15) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
+            return (pl.col('activity_drift') <= 0.15) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
         elif self.unit_criteria == 'strict_drift':
-            return (pl.col('activity_drift') <= 0.1) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.7) & (pl.col('amplitude_cutoff') <= 0.1)
+            return (pl.col('activity_drift') <= 0.1) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
         else:
             raise ValueError(f"No units query available for {self.unit_criteria=!r}")
 
