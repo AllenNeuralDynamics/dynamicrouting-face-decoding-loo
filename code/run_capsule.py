@@ -3,6 +3,7 @@ from __future__ import annotations
 # stdlib imports --------------------------------------------------- #
 import dataclasses
 import datetime
+import json
 import logging
 import pathlib
 import time
@@ -48,20 +49,20 @@ class Params(pydantic_settings.BaseSettings):
     # ----------------------------------------------------------------------------------
     
     # Capsule-specific parameters -------------------------------------- #
-    session_id: str | None = None
+    session_id: str | None = pydantic.Field(None, exclude=True)
     """If provided, only process this session_id. Otherwise, process all sessions that match the filtering criteria"""
     run_id: str = pydantic.Field(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")) # created at runtime: same for all Params instances 
     """A unique string that should be attached to all decoding runs in the same batch"""
     skip_existing: bool = pydantic.Field(False, exclude=True)
     test: bool = pydantic.Field(False, exclude=True)
     logging_level: str | int = pydantic.Field('INFO', exclude=True)
-    update_packages_from_source: bool = False
-    override_params_json: str | None = None #TODO not implemented
+    update_packages_from_source: bool = pydantic.Field(False, exclude=True)
+    override_params_json: str | None = pydantic.Field('{}', exclude=True)
     
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     unit_criteria: Literal['strict', 'medium', None] = 'medium'
-    n_units: int = 20
+    n_units: int = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
@@ -112,14 +113,15 @@ class Params(pydantic_settings.BaseSettings):
         """Path to delta lake on S3"""
         return upath.UPath("s3://aind-scratch-data/dynamic-routing/ben/decoding") /f"{'_'.join([self.result_prefix, self.run_id])}"
 
-    #TODO add to params json
+    @pydantic.computed_field(repr=False)
     @property
     def units_group_by(self) -> list[pl.Expr]:
         if self.split_area_by_probe:
             return [pl.col('session_id'), pl.col('structure'), pl.col('electrode_group_name')]
         else:
             return [pl.col('session_id'), pl.col('structure')]
-        
+    
+    @pydantic.computed_field(repr=False)
     @property
     def units_query(self) -> pl.Expr:
         
@@ -169,6 +171,9 @@ def main():
     utils.setup_logging()
     params = Params() # reads from CLI args
     logger.setLevel(params.logging_level)
+    if params.override_params_json:
+        logger.info(f"Overriding parameters with {params.override_params_json}")
+        params = Params(**json.loads(params.override_params_json))
     if params.test:
         params = Params(
             result_prefix=f"test/{params.result_prefix}",
@@ -201,9 +206,16 @@ def main():
     else:
         logger.info(f"Using list of {len(session_ids)} session_ids after filtering")
     
-    logger.info(f'Writing params file')
     upath.UPath('/results/params.json').write_text(params.model_dump_json(indent=4))
-    (params.data_path / 'params.json').write_text(params.model_dump_json(indent=4))
+    s3_params_path = params.data_path / 'params.json'
+    if s3_params_path.exists():
+        existing_params = Params.model_validate_json(s3_params_path.read_text())
+        if existing_params.model_dump() != params.model_dump():
+            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params.model_dump()=}\n{params.model_dump()=}")
+    else:            
+        logger.info(f'Writing params file: {s3_params_path}')
+        s3_params_path.write_text(params.model_dump_json(indent=4))
+    
     logger.info(f'starting decode_context_with_linear_shift with {params.model_dump()}')
     decoding_utils.decode_context_with_linear_shift(session_ids=session_ids, params=params)
     
