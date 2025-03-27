@@ -186,9 +186,9 @@ def main():
     upath.UPath('/results/params.json').write_text(params.model_dump_json(indent=4))
     s3_params_path = params.data_path / 'params.json'
     if s3_params_path.exists():
-        existing_params = Params.model_validate_json(s3_params_path.read_text())
-        if existing_params.model_dump() != params.model_dump():
-            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params.model_dump()=}\n{params.model_dump()=}")
+        existing_params = json.loads(s3_params_path.read_text())
+        if existing_params != params.model_dump():
+            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}")
     else:            
         logger.info(f'Writing params file: {s3_params_path}')
         s3_params_path.write_text(params.model_dump_json(indent=4))
