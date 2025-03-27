@@ -241,8 +241,6 @@ def wrap_decoder_helper(
                 break
         if params.test:
             break
-    import pickle
-    upath.UPath('/results/result.pkl').write_bytes(pickle.dumps(_result))
     (
         pl.DataFrame(results)
         .with_columns(
