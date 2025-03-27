@@ -67,43 +67,22 @@ class Params(pydantic_settings.BaseSettings):
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
-    vid_angle_facemotion: Literal['behavior', 'face', 'eye'] = 'face'
-    vid_angle_LP: Literal['behavior', 'face', 'eye'] = 'behavior'
-    central_section: str = '4_blocks_plus'
-    """for linear shift decoding, how many trials to use for the shift. '4_blocks_plus' is best"""
-    exclude_cue_trials: bool = False
-    """option to totally exclude autorewarded trials"""
-    n_unit_threshold: int = 5
-    """minimum number of units to include an area in the analysis"""
-    keep_n_SVDs: int = 500
-    """number of SVD components to keep for facemap data"""
-    LP_parts_to_keep: list = dataclasses.field(default_factory=lambda: ['ear_base_l', 'eye_bottom_l', 'jaw', 'nose_tip', 'whisker_pad_l_side'])
     spikes_binsize: float = 0.2
     spikes_time_before: float = 0.2
     spikes_time_after: float = 0.01
-    use_structure_probe: bool = True
-    """if True, append probe name to area name when multiple probes in the same area"""
     crossval: Literal['5_fold', 'blockwise'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
     decoder_type: Literal['linearSVC', 'LDA', 'RandomForest', 'LogisticRegression'] = 'LogisticRegression'
-    only_use_all_units: bool = False
-    """if True, do not run decoding with different areas, only with all areas -- for debugging"""
-    predict: Literal['context', 'vis_appropriate_response'] = 'context'
-    """ 'context' = predict context; 'vis_appropriate_response' = predict whether the mouse's response was appropriate for a visual context block """
     regularization: float | None = None
     """ set regularization (C) for the decoder. Setting to None reverts to the default value (usually 1.0) """
     penalty: str | None = None
     """ set penalty for the decoder. Setting to None reverts to default """
     solver: str | None = None
     """ set solver for the decoder. Setting to None reverts to default """
-    select_single_area: str | None = None
-    """ select a single area to run decoding analysis on. If None, run on all areas """
     split_area_by_probe: bool = True
     """ splits area units by probe if recorded by more than one probe"""
-    n_jobs: int | None = None
-    """scikit-learn parameter for parallelization"""
     use_process_pool: bool = True
     max_workers: int | None = None
     """For process pool"""
@@ -171,18 +150,16 @@ def main():
     utils.setup_logging()
     params = Params() # reads from CLI args
     logger.setLevel(params.logging_level)
+    
     if params.override_params_json:
         logger.info(f"Overriding parameters with {params.override_params_json}")
         params = Params(**json.loads(params.override_params_json))
+        
     if params.test:
         params = Params(
             result_prefix=f"test/{params.result_prefix}",
-            only_use_all_units=True,
             n_units=20,
-            keep_n_SVDs=5,
-            LP_parts_to_keep=["ear_base_l"],
             n_repeats=1,
-            n_unit_threshold=5,
         )
         logger.info("Test mode: using modified set of parameters")
         
