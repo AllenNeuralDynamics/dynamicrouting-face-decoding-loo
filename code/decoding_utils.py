@@ -100,7 +100,7 @@ def decode_context_with_linear_shift(
                         except Exception:
                             logger.exception(f'{session_id} | Failed:')
                     logger.info(f'{session_id} | Completed')
-                
+    else: # single-process mode
         for row in tqdm.tqdm(areas.iter_rows(named=True), total=len(areas), unit='row', desc=f'decoding {session_id}'):
             try:
                 wrap_decoder_helper(
