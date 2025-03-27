@@ -61,7 +61,7 @@ class Params(pydantic_settings.BaseSettings):
     
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    unit_criteria: Literal['strict', 'medium', None] = 'medium'
+    unit_criteria: str = 'medium'
     n_units: int = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
