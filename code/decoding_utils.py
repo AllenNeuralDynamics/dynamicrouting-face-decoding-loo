@@ -2,84 +2,150 @@ import concurrent.futures as cf
 import logging
 import math
 import multiprocessing
+from typing import Iterable
 
 import numpy as np
 import polars as pl
+import polars._typing
 import tqdm
-from dynamic_routing_analysis.decoding_utils import decoder_helper
+import upath
+from dynamic_routing_analysis.decoding_utils import decoder_helper, NotEnoughBlocksError
 
 import utils
 
 logger = logging.getLogger(__name__)
 
-def decode_context_with_linear_shift(
-    session_id: str,
-    params,
-):
-    structure_to_results = {}
-    # TODO add option to work on area + probe 
-    # TODO add SC groupings
-    units = (
+
+    
+def group_structures(frame: polars._typing.FrameType, keep_originals=False) -> polars._typing.FrameType:
+    grouping = {
+        'SCop': 'SCs',
+        'SCsg': 'SCs',
+        'SCzo': 'SCs',
+        'SCig': 'SCm',
+        'SCiw': 'SCm',
+        'SCdg': 'SCm',
+        'SCdw': 'SCm',
+    }
+    n_repeats = 2 if keep_originals else 1
+    frame = (
+        frame
+        .with_columns(
+            pl.when(pl.col('structure').is_in(grouping))
+            .then(pl.col('structure').repeat_by(n_repeats))
+            .otherwise(pl.col('structure').repeat_by(1))
+        )
+        .explode('structure')
+        .with_columns(
+            pl.when(pl.col('structure').is_in(grouping).is_first_distinct().over('unit_id'))
+            .then(pl.col('structure').replace(grouping))
+            .otherwise(pl.col('structure'))
+        )
+    )
+    return frame 
+
+def get_filtered_units(params) -> pl.LazyFrame:
+    frame = (
         utils.get_df('units', lazy=True)
         .filter(
             params.units_query,
         )
+        .pipe(group_structures, keep_originals=True)
         .filter(
-            pl.col('session_id') == session_id,
-            # only use areas with at least n_units (cannot random sample without replacement 
-            # if we have less than n_units):
-            pl.col('unit_id').n_unique().ge(params.n_units).over('session_id', 'structure'), # TODO optionally add electrode_group 
+            pl.col('unit_id').n_unique().ge(params.n_units).over(params.units_group_by)
         )
     )
-    structures = units.select('structure').collect()['structure'].unique().sort()
+    return frame
+
+def decode_context_with_linear_shift(
+    session_ids: str | Iterable[str],
+    params,
+) -> None:
+    if isinstance(session_ids, str):
+        session_ids = [session_ids]
+
+    areas = (
+        get_filtered_units(params)
+        .filter(
+            pl.col('session_id').is_in(session_ids),
+        )
+        .select(params.units_group_by)
+        .unique(params.units_group_by)
+        .collect()
+    )
+
     if params.use_process_pool:
+        session_results: dict[str, list[cf.Future]] = {}
+        future_to_session = {}
         with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('spawn')) as executor:
-            future_to_structure = {}
-            for structure in structures:
+            for row in areas.iter_rows(named=True):
                 future = executor.submit(
                     wrap_decoder_helper,
-                    session_id=session_id,
                     params=params,
-                    structure=structure,
+                    **row,
                 )
-                future_to_structure[future] = structure
-                logger.info(f"Submitted decoding to process pool for session {session_id}, structure {structure}")
+                session_results.setdefault(row['session_id'], []).append(future)
+                future_to_session[future] = row['session_id']
+                logger.debug(f"Submitted decoding to process pool for session {row['session_id']}, structure {row['structure']}")
                 if params.test:
+                    logger.info("Test mode: exiting after first session")
                     break
-            for future in tqdm.tqdm(cf.as_completed(future_to_structure), total=len(future_to_structure), unit='structure', desc=f'decoding {session_id}'):
-                structure = future_to_structure[future]
-                structure_to_results[structure] = future.result()
-    else:
-        
-        for structure in tqdm.tqdm(structures, unit='structure', desc=f'decoding {session_id}'):
-            result = wrap_decoder_helper(
-                session_id=session_id,
-                params=params,
-                structure=structure,
-            )
-            structure_to_results[structure] = result
+            for future in tqdm.tqdm(cf.as_completed(future_to_session), total=len(future_to_session), unit='structure', desc=f'Decoding'):
+                session_id = future_to_session[future]
+                if all(future.done() for future in session_results[session_id]):
+                    logger.debug(f"Decoding completed for session {session_id}")
+                    for f in session_results[session_id]:
+                        try:
+                            _ = f.result()
+                        except Exception:
+                            logger.exception(f'{session_id} | Failed:')
+                    logger.info(f'{session_id} | Completed')
+                
+        for row in tqdm.tqdm(areas.iter_rows(named=True), total=len(areas), unit='row', desc=f'decoding {session_id}'):
+            try:
+                wrap_decoder_helper(
+                    params=params,
+                    **row,
+                )
+            except Exception:
+                logger.exception(f'{row["session_id"]} | Failed:')
             if params.test:
+                logger.info("Test mode: exiting after first session")
                 break
-    return structure_to_results
 
 def wrap_decoder_helper(
-    session_id: str,
     params,
+    session_id: str,
     structure: str,
+    electrode_group_name: str | None = None,
 ):
-    logger.debug(f"Getting units and trials for {session_id} {structure}")
+    if params.skip_existing and params.data_path.exists():
+        delta_df = (
+            pl.scan_delta(params.data_path.as_posix())
+            .filter(
+                pl.col('session_id') == session_id,
+                pl.col('structure') == structure,
+            )
+        )
+        if electrode_group_name is not None:
+            delta_df = delta_df.filter(pl.col('electrode_group_name') == electrode_group_name)
+        session_results = delta_df.collect()
+        if not session_results.is_empty():
+            logger.info(f"Skipping {session_id} {structure} {electrode_group_name} - results already exist")
+            return 
     
+    logger.debug(f"Getting units and trials for {session_id} {structure}")
     spike_counts_df = utils.get_per_trial_spike_times(
         intervals={
             'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_start_time')),
         },
         as_counts=True,
         unit_ids=(
-            utils.get_df('units', lazy=True)
+            get_filtered_units(params)
             .filter(
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                params.units_query,
+                pl.lit(True) if electrode_group_name is None else pl.col('electrode_group_name').eq(electrode_group_name),
             )
             .select('unit_id')
             .collect()
@@ -110,7 +176,7 @@ def wrap_decoder_helper(
     logger.debug(f"Got {len(trials)} trials")
     
     if trials.n_unique('block_index') != 6:
-        raise ValueError(f'Expecting 6 blocks for {session_id}: got {trials.n_unique("block_index")}')
+        raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks')
 
     neg = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
     pos = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -118,7 +184,7 @@ def wrap_decoder_helper(
     shifts = tuple(range(-neg, pos+1))
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
-    repeat_idx_to_results = {}
+    results = []
     # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
     # get the min number of repeats possible to avoid unnecessary work:
     n_possible_samples = math.comb(len(unit_ids), params.n_units)
@@ -129,7 +195,6 @@ def wrap_decoder_helper(
         n_repeats = params.n_repeats
     unit_samples: list[set[int]] = []
     for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
-        shift_to_results = {}
         
         # ensure we don't sample the same set of units twice when we have few units:
         while True:
@@ -151,7 +216,7 @@ def wrap_decoder_helper(
             assert data.shape == (len(labels), len(sel_units)), f"{data.shape=}, {len(labels)=}, {len(sel_units)=}"
             logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
             
-            shift_to_results[shift] = decoder_helper(
+            _result = decoder_helper(
                 data,
                 labels,
                 decoder_type=params.decoder_type,
@@ -164,11 +229,26 @@ def wrap_decoder_helper(
                 solver=params.solver,
                 n_jobs=params.n_jobs
             )
+            result = {}
+            result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
+            result['shift_idx'] = shift
+            result['repeat_idx'] = repeat_idx
+            results.append(result)
             if params.test:
                 break
-        repeat_idx_to_results[repeat_idx] = shift_to_results
         if params.test:
             break
-    
+    import pickle
+    upath.UPath('/results/result.pkl').write_bytes(pickle.dumps(results[0]))
+    (
+        pl.DataFrame(results)
+        .with_columns(
+            pl.lit(session_id).alias('session_id'),
+            pl.lit(structure).alias('structure'),
+            pl.lit(electrode_group_name).alias('electrode_group_name'),
+            pl.lit(params.n_units).alias('n_units'),
+        )
+        .write_delta(params.data_path.as_posix(), mode='append')
+    )
     logger.info(f"Completed decoding for session {session_id}, structure {structure}")
-    return repeat_idx_to_results
+    # return results

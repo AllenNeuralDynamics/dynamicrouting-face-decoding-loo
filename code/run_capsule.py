@@ -1,33 +1,26 @@
 from __future__ import annotations
 
 # stdlib imports --------------------------------------------------- #
-import argparse
 import dataclasses
-import gc
-import json
-import functools
+import datetime
 import logging
 import pathlib
 import time
-import types
-import typing
-import uuid
-from typing import Any, Literal, Union
+from typing import Annotated, Literal
 
 # 3rd-party imports necessary for processing ----------------------- #
-import numpy as np
-import numpy.typing as npt
-import pandas as pd
 import matplotlib
-import matplotlib.pyplot as plt
-import sklearn
+import pandas as pd
 import polars as pl
-import pynwb
+import pydantic_settings
+import pydantic_settings.sources
+import pydantic.functional_serializers
 import upath
-import zarr
 
-import decoding_utils
+# local modules ---------------------------------------------------- #
 import utils
+import decoding_utils
+
 
 # logging configuration -------------------------------------------- #
 # use `logger.info(msg)` instead of `print(msg)` so we get timestamps and origin of log messages
@@ -41,108 +34,40 @@ matplotlib.rcParams['pdf.fonttype'] = 42
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR) # suppress matplotlib font warnings on linux
 
 
-# utility functions ------------------------------------------------ #
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--session_id', type=str, default=None)
-    parser.add_argument('--logging_level', type=str, default='INFO')
-    parser.add_argument('--skip_existing', type=int, default=1)
-    parser.add_argument('--update_packages_from_source', type=int, default=1)
-    parser.add_argument('--test', type=int, default=0)
-    parser.add_argument('--session_table_query', type=str, default="is_ephys & is_task & is_annotated & is_production & issues=='[]'")
-    parser.add_argument('--override_params_json', type=str, default="{}")
-    for field in dataclasses.fields(Params):
-        if field.name in [getattr(action, 'dest') for action in parser._actions]:
-            # already added field above
-            continue
-        logger.debug(f"adding argparse argument {field}")
-        kwargs = {}
-        if isinstance(field.type, str):
-            kwargs = {'type': eval(field.type)}
-        else:
-            kwargs = {'type': field.type}
-        if kwargs['type'] in (list, tuple):
-            logger.debug(f"Cannot correctly parse list-type arguments from App Builder: skipping {field.name}")
-        if isinstance(field.type, str) and field.type.startswith('Literal'):
-            kwargs['type'] = str
-        if isinstance(kwargs['type'], (types.UnionType, typing._UnionGenericAlias)):
-            kwargs['type'] = typing.get_args(kwargs['type'])[0]
-            logger.info(f"setting argparse type for union type {field.name!r} ({field.type}) as first component {kwargs['type']!r}")
-        parser.add_argument(f'--{field.name}', **kwargs)
-    args = parser.parse_args()
-    list_args = [k for k,v in vars(args).items() if type(v) in (list, tuple)]
-    if list_args:
-        raise NotImplementedError(f"Cannot correctly parse list-type arguments from App Builder: remove {list_args} parameter and provide values via `override_params_json` instead")
-    logger.info(f"{args=}")
-    return args
-
-
-# processing function ---------------------------------------------- #
-# modify the body of this function, but keep the same signature
-
-def process_session(session_id: str, params: "Params") -> None:
-    """Process a single session with parameters defined in `params` and save results + params to
-    /results.
-    
-    A test mode should be implemented to allow for quick testing of the capsule (required every time
-    a change is made if the capsule is in a pipeline) 
-    """
-
-    if params.test:
-        params.folder_name = f"test/{params.folder_name}"
-        params.only_use_all_units = True
-        params.n_units = 20
-        params.keep_n_SVDs = 5
-        params.LP_parts_to_keep = ["ear_base_l"]
-        params.n_repeats = 1
-        params.n_unit_threshold = 5
-        logger.info(f"Test mode: using modified set of parameters")
-
-    if params.skip_existing and params.file_path.exists():
-        logger.info(f"{params.file_path} exists: processing skipped")
-        return
-    
-    logger.info(f'starting decode_context_with_linear_shift for {session_id} with {params.to_json()}')
-
-    decoding_utils.decode_context_with_linear_shift(session_id=session_id,params=params)
-
-    logger.info(f'{session_id} | Writing params file')
-    params.write_json(params.file_path.with_suffix('.json'))
-    
     
 # define run params here ------------------------------------------- #
+Expr = Annotated[
+    pl.Expr, pydantic.functional_serializers.PlainSerializer(lambda expr: expr.meta.serialize(format='json'), return_type=str)
+]
 
-# The `Params` class is used to store parameters for the run, for passing to the processing function.
-# @property methods (like `savepath` below) are computed from other parameters on-demand as required:
-# this way, we can separate the parameters dumped to json from larger arrays etc. required for
-# processing. We can also update other fields during test mode, and the updated values will be incoporated 
-# into these fields.
-
-# - if needed, we can get parameters from the command line and pass them to the dataclass (see `main()` below):
-#   just add a field to the App Builder parameters with the same `Parameter Name`
-
-# this is an example from Sam's processing code, replace with your own parameters as needed:
-@dataclasses.dataclass
-class Params:
+class Params(pydantic_settings.BaseSettings):
     # ----------------------------------------------------------------------------------
-    # defaults don't matter for these parameters, they will be updated later:
-    session_id: str = ""
-    run_id: str = ""
-    """A unique string that should be attached to all decoding runs in the same batch"""
+    # Required parameters
+    result_prefix: str
+    "An identifier for the decoding run, used to name the output files (can have duplicates with different run_id)"
     # ----------------------------------------------------------------------------------
-    test: int = 0
-    skip_existing: int = 1
     
-    folder_name: str = "test"
-    unit_criteria: str = 'medium'
+    # Capsule-specific parameters -------------------------------------- #
+    session_id: str | None = None
+    """If provided, only process this session_id. Otherwise, process all sessions that match the filtering criteria"""
+    run_id: str = pydantic.Field(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")) # created at runtime: same for all Params instances 
+    """A unique string that should be attached to all decoding runs in the same batch"""
+    skip_existing: bool = pydantic.Field(False, exclude=True)
+    test: bool = pydantic.Field(False, exclude=True)
+    logging_level: str | int = pydantic.Field('INFO', exclude=True)
+    update_packages_from_source: bool = False
+    override_params_json: str | None = None #TODO not implemented
+    
+    # Decoding parameters ----------------------------------------------- #
+    session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
+    unit_criteria: Literal['strict', 'medium', None] = 'medium'
     n_units: int = 20
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
-    input_data_type: str | Literal['spikes', 'facemap', 'LP'] = 'spikes'
-    vid_angle_facemotion: str | Literal['behavior', 'face', 'eye'] = 'face'
-    vid_angle_LP: str | Literal['behavior', 'face', 'eye'] = 'behavior'
+    input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
+    vid_angle_facemotion: Literal['behavior', 'face', 'eye'] = 'face'
+    vid_angle_LP: Literal['behavior', 'face', 'eye'] = 'behavior'
     central_section: str = '4_blocks_plus'
     """for linear shift decoding, how many trials to use for the shift. '4_blocks_plus' is best"""
     exclude_cue_trials: bool = False
@@ -161,10 +86,10 @@ class Params:
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
-    decoder_type: str | Literal['linearSVC', 'LDA', 'RandomForest', 'LogisticRegression'] = 'LogisticRegression'
+    decoder_type: Literal['linearSVC', 'LDA', 'RandomForest', 'LogisticRegression'] = 'LogisticRegression'
     only_use_all_units: bool = False
     """if True, do not run decoding with different areas, only with all areas -- for debugging"""
-    predict: str = 'context'
+    predict: Literal['context', 'vis_appropriate_response'] = 'context'
     """ 'context' = predict context; 'vis_appropriate_response' = predict whether the mouse's response was appropriate for a visual context block """
     regularization: float | None = None
     """ set regularization (C) for the decoder. Setting to None reverts to the default value (usually 1.0) """
@@ -174,26 +99,27 @@ class Params:
     """ set solver for the decoder. Setting to None reverts to default """
     select_single_area: str | None = None
     """ select a single area to run decoding analysis on. If None, run on all areas """
-    split_area_by_probe: int = 1
+    split_area_by_probe: bool = True
     """ splits area units by probe if recorded by more than one probe"""
     n_jobs: int | None = None
-    """ scikit-learn parameter for parallelization """
-    use_process_pool: int = 1
-    max_workers: int = None
+    """scikit-learn parameter for parallelization"""
+    use_process_pool: bool = True
+    max_workers: int | None = None
     """For process pool"""
 
     @property
-    def savepath(self) -> upath.UPath:
-        return upath.UPath("s3://aind-scratch-data/dynamic-routing/ethan/decoding-results") / f"{self.folder_name}_{self.run_id}" 
+    def data_path(self) -> upath.UPath:
+        """Path to delta lake on S3"""
+        return upath.UPath("s3://aind-scratch-data/dynamic-routing/ben/decoding") /f"{'_'.join([self.result_prefix, self.run_id])}"
 
+    #TODO add to params json
     @property
-    def filename(self) -> str:
-        return f"{self.session_id}_{self.run_id}.pkl"
-
-    @property
-    def file_path(self) -> upath.UPath:
-        return self.savepath / self.filename
-    
+    def units_group_by(self) -> list[pl.Expr]:
+        if self.split_area_by_probe:
+            return [pl.col('session_id'), pl.col('structure'), pl.col('electrode_group_name')]
+        else:
+            return [pl.col('session_id'), pl.col('structure')]
+        
     @property
     def units_query(self) -> pl.Expr:
         
@@ -216,77 +142,71 @@ class Params:
         else:
             raise ValueError(f"No units query available for {self.unit_criteria=!r}")
 
-    def to_json(self, **dumps_kwargs) -> str:
-        """json string of field name: value pairs, excluding values from property getters (which may be large)"""
-        return json.dumps(dataclasses.asdict(self), **dumps_kwargs)
-
-    def write_json(self, path: str | upath.UPath = '/results/params.json') -> None:
-        path = upath.UPath(path)
-        logger.info(f"Writing params to {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.to_json(indent=2))
-
-    def to_dict(self) -> dict[str, Any]:
-        """dict of field name: value pairs, including values from property getters"""
-        return dataclasses.asdict(self) | {k: getattr(self, k) for k in dir(self.__class__) if isinstance(getattr(self.__class__, k), property)}
-
-# ------------------------------------------------------------------ #
-
+    # set the priority of the sources:
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        *args,
+        **kwargs,
+    ):
+        # the order of the sources is what defines the priority:
+        # - first source is highest priority
+        # - for each field in the class, the first source that contains a value will be used
+        return (
+            init_settings,
+            pydantic_settings.sources.JsonConfigSettingsSource(settings_cls, json_file='parameters.json'),
+            pydantic_settings.CliSettingsSource(settings_cls, cli_parse_args=True),
+        )
+        
+        
+# processing function ---------------------------------------------- #
 
 def main():
     t0 = time.time()
     
     utils.setup_logging()
-
-    # get arguments passed from command line (or "AppBuilder" interface):
-    args = parse_args()
-    logger.setLevel(args.logging_level)
-
-    # if any of the parameters required for processing are passed as command line arguments, we can
-    # get a new params object with these values in place of the defaults:
-    params = {}
-    for field in dataclasses.fields(Params):
-        if (val := getattr(args, field.name, None)) is not None:
-            params[field.name] = val
-    
-    override_params = json.loads(args.override_params_json)
-    if override_params:
-        for k, v in override_params.items():
-            if k in params:
-                logger.info(f"Overriding value of {k!r} from command line arg with value specified in `override_params_json`")
-            params[k] = v
+    params = Params() # reads from CLI args
+    logger.setLevel(params.logging_level)
+    if params.test:
+        params = Params(
+            result_prefix=f"test/{params.result_prefix}",
+            only_use_all_units=True,
+            n_units=20,
+            keep_n_SVDs=5,
+            LP_parts_to_keep=["ear_base_l"],
+            n_repeats=1,
+            n_unit_threshold=5,
+        )
+        logger.info("Test mode: using modified set of parameters")
+        
     
     # if session_id is passed as a command line argument, we will only process that session,
     # otherwise we process all session IDs that match filtering criteria:    
     session_table = pd.read_parquet(utils.get_datacube_dir() / 'session_table.parquet')
     session_table['issues']=session_table['issues'].astype(str)
-    session_ids: list[str] = session_table.query(args.session_table_query)['session_id'].values.tolist()
+    session_ids: list[str] = session_table.query(params.session_table_query)['session_id'].values.tolist()
     logger.debug(f"Found {len(session_ids)} session_ids available for use after filtering")
     
-    if args.session_id is not None:
-        if args.session_id not in session_ids:
-            logger.warning(f"{args.session_id!r} not in filtered session_ids: exiting")
+    if params.session_id is not None:
+        if params.session_id not in session_ids:
+            logger.warning(f"{params.session_id!r} not in filtered session_ids: exiting")
             exit()
-        logger.info(f"Using single session_id {args.session_id} provided via command line argument")
-        session_ids = [args.session_id]
+        logger.info(f"Using single session_id {params.session_id} provided via command line argument")
+        session_ids = [params.session_id]
     elif utils.is_pipeline(): 
         # only one nwb will be available 
         session_ids = set(session_ids) & set(p.stem for p in utils.get_nwb_paths())
     else:
         logger.info(f"Using list of {len(session_ids)} session_ids after filtering")
     
-    # run processing function for each session, with test mode implemented:
-    for session_id in session_ids:
-        try:
-            process_session(session_id, params=Params(**params | {'session_id': session_id, 'test': args.test, 'skip_existing':args.skip_existing}))
-        except Exception as e:
-            logger.exception(f'{session_id} | Failed:')
-        else:
-            logger.info(f'{session_id} | Completed')
-
-        if args.test:
-            logger.info("Test mode: exiting after first session")
-            break
+    logger.info(f'Writing params file')
+    upath.UPath('/results/params.json').write_text(params.model_dump_json(indent=4))
+    (params.data_path / 'params.json').write_text(params.model_dump_json(indent=4))
+    logger.info(f'starting decode_context_with_linear_shift with {params.model_dump()}')
+    decoding_utils.decode_context_with_linear_shift(session_ids=session_ids, params=params)
+    
     utils.ensure_nonempty_results_dir()
     logger.info(f"Time elapsed: {time.time() - t0:.2f} s")
 

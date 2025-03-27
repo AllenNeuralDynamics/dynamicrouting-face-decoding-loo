@@ -4,12 +4,20 @@
 	"parameters": [
 		{
 			"id": "x52gWS7EBuAj6nGG",
-			"name": "run_id",
-			"param_name": "run_id",
+			"name": "result_prefix",
+			"param_name": "result_prefix",
 			"description": "A unique string that should be attached to all decoding runs in the same batch - used for naming folders/files on S3",
 			"type": "text",
 			"value_type": "string",
 			"required": true
+		},
+		{
+			"id": "uxoZwW2rMVHw8rAt",
+			"name": "run_id",
+			"param_name": "run_id",
+			"description": "high level description of run to include in folder name",
+			"type": "text",
+			"value_type": "string"
 		},
 		{
 			"id": "xxVUgdPR32dB7B9H",
@@ -74,14 +82,6 @@
 			"value_type": "integer",
 			"default_value": "1",
 			"maximum": 1
-		},
-		{
-			"id": "uxoZwW2rMVHw8rAt",
-			"name": "folder_name",
-			"param_name": "folder_name",
-			"description": "high level description of run to include in folder name",
-			"type": "text",
-			"value_type": "string"
 		},
 		{
 			"id": "exDAGscNDd2rht1z",
