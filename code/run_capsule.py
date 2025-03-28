@@ -58,7 +58,10 @@ class Params(pydantic_settings.BaseSettings):
     logging_level: str | int = pydantic.Field('INFO', exclude=True)
     update_packages_from_source: bool = pydantic.Field(False, exclude=True)
     override_params_json: str | None = pydantic.Field('{}', exclude=True)
-    
+    use_process_pool: bool = pydantic.Field(True, exclude=True)
+    max_workers: int | None = pydantic.Field(None, exclude=True)
+    """For process pool"""
+
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     unit_criteria: str = 'medium'
@@ -83,9 +86,6 @@ class Params(pydantic_settings.BaseSettings):
     """ set solver for the decoder. Setting to None reverts to default """
     split_area_by_probe: bool = True
     """ splits area units by probe if recorded by more than one probe"""
-    use_process_pool: bool = True
-    max_workers: int | None = None
-    """For process pool"""
 
     @property
     def data_path(self) -> upath.UPath:
