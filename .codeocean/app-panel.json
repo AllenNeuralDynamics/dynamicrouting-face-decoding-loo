@@ -37,6 +37,22 @@
 			"default_value": "INFO"
 		},
 		{
+			"id": "u68UC9mfe9wxpOzc",
+			"name": "unit_criteria",
+			"param_name": "unit_criteria",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "no_drift"
+		},
+		{
+			"id": "TodaD5cDUuK1OCzO",
+			"name": "n_units",
+			"param_name": "n_units",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "all"
+		},
+		{
 			"id": "CLnGBLMVID8fEr6c",
 			"name": "session_table_query",
 			"param_name": "session_table_query",
