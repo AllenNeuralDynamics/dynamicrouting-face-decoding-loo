@@ -197,7 +197,7 @@ def wrap_decoder_helper(
         utils.get_df('trials', lazy=True)
         .filter(pl.col('session_id') == session_id)
         .sort('trial_index')
-        .select('context_name', 'trial_index', 'block_index')
+        .select('context_name', 'trial_index', 'block_index', 'session_id')
         .collect()
     )
     if (
@@ -209,6 +209,9 @@ def wrap_decoder_helper(
             trials
             .with_columns(
                 pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().alias('ten_min_block_index')
+            )
+            .filter(
+                pl.col('ten_min_block_index').lt(6), # discard a short 7th block if present
             )
             .with_columns(
                 pl.when(pl.col('ten_min_block_index').mod(2).eq(random.choice([0, 1])))
