@@ -63,7 +63,7 @@ def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.
         .group_by('session_id', 'structure')
         .agg(
             pl.all().exclude('electrode_group_name'),
-            pl.col('electrode_group_name').alias('electrode_group_names'),
+            pl.col('electrode_group_name').unique().alias('electrode_group_names'),
         )
         # duplicate those with multiple probes (col becomes List[List[String]]):
         .with_columns(
@@ -71,7 +71,9 @@ def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.
             .then(pl.col('electrode_group_names').repeat_by(2))
             .otherwise(pl.col('electrode_group_names').repeat_by(1))
         )
+        # # .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
         .explode('electrode_group_names')
+
         # convert the duplicated rows to joined 'probeA_probeB' format:
         .with_columns(
             pl.when(pl.col('electrode_group_names').is_first_distinct().over('session_id', 'structure'))
@@ -83,22 +85,9 @@ def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.
         .with_columns(
             pl.col('electrode_group_names').list.eval(pl.element().str.split('_'))
         )
+         .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
         .explode('electrode_group_names')
     )
-    
-def get_filtered_units(params) -> pl.LazyFrame:
-    frame = (
-        utils.get_df('units', lazy=True)
-        .filter(
-            params.units_query,
-        )
-        .pipe(group_structures, keep_originals=True)
-        .pipe(repeat_multi_probe_areas)
-        .filter(
-            pl.col('unit_id').n_unique().ge(params.n_units).over(params.units_group_by)
-        )
-    )
-    return frame
 
 def decode_context_with_linear_shift(
     session_ids: str | Iterable[str],
@@ -107,10 +96,16 @@ def decode_context_with_linear_shift(
     if isinstance(session_ids, str):
         session_ids = [session_ids]
 
-    areas = (
-        get_filtered_units(params)
+    combinations_df = (
+        utils.get_df('units', lazy=True)
         .filter(
             pl.col('session_id').is_in(session_ids),
+            params.units_query,
+        )
+        .pipe(group_structures, keep_originals=True)
+        .pipe(repeat_multi_probe_areas)
+        .filter(
+            pl.col('unit_id').n_unique().ge(params.n_units).over(params.units_group_by)
         )
         .select(params.units_group_by)
         .unique(params.units_group_by)
@@ -121,12 +116,12 @@ def decode_context_with_linear_shift(
     else:
         existing = []
 
-    logger.info(f"Processing {len(areas)} unique session/area/probe combinations")
+    logger.info(f"Processing {len(combinations_df)} unique session/area/probe combinations")
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
         with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('forkserver')) as executor:
-            for row in areas.iter_rows(named=True):
+            for row in combinations_df.iter_rows(named=True):
                 if params.skip_existing and row in existing:
                     logger.info(f"Skipping {row} - results already exist")
                     continue
@@ -152,7 +147,7 @@ def decode_context_with_linear_shift(
                             logger.exception(f'{session_id} | Failed:')
                     logger.info(f'{session_id} | Completed')
     else: # single-process mode
-        for row in tqdm.tqdm(areas.iter_rows(named=True), total=len(areas), unit='row', desc=f'decoding'):
+        for row in tqdm.tqdm(combinations_df.iter_rows(named=True), total=len(combinations_df), unit='row', desc=f'decoding'):
             if params.skip_existing and row in existing:
                 logger.info(f"Skipping {row} - results already exist")
                 continue
@@ -182,11 +177,12 @@ def wrap_decoder_helper(
         },
         as_counts=True,
         unit_ids=(
-            get_filtered_units(params)
+            utils.get_df('units', lazy=True)
             .filter(
+                params.units_query,
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                pl.lit(True) if electrode_group_names is None else pl.col('electrode_group_names').is_in(electrode_group_names),
+                pl.lit(True) if electrode_group_names is None else pl.col('electrode_group_name').is_in(electrode_group_names),
             )
             .select('unit_id')
             .collect()
