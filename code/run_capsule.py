@@ -72,7 +72,7 @@ class Params(pydantic_settings.BaseSettings):
 
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    unit_criteria: str = 'medium'
+    unit_criteria: str = pydantic.Field("medium", exclude=True) # often varied, stoed in data not params file
     n_units: int = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
@@ -99,29 +99,37 @@ class Params(pydantic_settings.BaseSettings):
         """Path to delta lake on S3"""
         return upath.UPath("s3://aind-scratch-data/dynamic-routing/ben/decoding") /f"{'_'.join([self.result_prefix, self.run_id])}"
 
-    @pydantic.computed_field(repr=False)
+    @property
+    def json_path(self) -> upath.UPath:
+        """Path to params json on S3"""
+        return data_path.with_suffix('.json')
+
     @property
     def units_query(self) -> Expr:
-        
-        if self.unit_criteria == 'medium':
-            return (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'strict':
-            return (pl.col('isi_violations_ratio') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'use_sliding_rp':
-            return (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'recalc_presence_ratio':
-            return (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio_task') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'no_drift':
-            return (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'loose_drift':
-            return (pl.col('activity_drift') <= 0.2) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'medium_drift':
-            return (pl.col('activity_drift') <= 0.15) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
-        elif self.unit_criteria == 'strict_drift':
-            return (pl.col('activity_drift') <= 0.1) & (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
-        else:
-            raise ValueError(f"No units query available for {self.unit_criteria=!r}")
+        return self.unit_criteria_queries[self.unit_criteria]
 
+    @pydantic.computed_field(repr=False)
+    @property
+    def unit_criteria_queries(self) -> dict[str, Expr]:
+        drift_base = (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
+        return {
+            'medium': (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1),
+            
+            'strict': (pl.col('isi_violations_ratio') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1),
+            
+            'use_sliding_rp': (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1),
+            
+            'recalc_presence_ratio': (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio_task') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1),
+            
+            'no_drift': basic_drift,
+            
+            'loose_drift': basic_drift & (pl.col('activity_drift') <= 0.2)
+            
+            'medium_drift': basic_drift & (pl.col('activity_drift') <= 0.15),
+            
+            'strict_drift': basic_drift & (pl.col('activity_drift') <= 0.1),
+        }
+        
     # set the priority of the sources:
     @classmethod
     def settings_customise_sources(
@@ -183,14 +191,13 @@ def main():
         logger.info(f"Using list of {len(session_ids)} session_ids after filtering")
     
     upath.UPath('/results/params.json').write_text(params.model_dump_json(indent=4))
-    s3_params_path = params.data_path / 'params.json'
-    if s3_params_path.exists():
-        existing_params = json.loads(s3_params_path.read_text())
+    if params.json_path.exists():
+        existing_params = json.loads(params.json_path.read_text())
         if existing_params != params.model_dump():
             raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}")
     else:            
-        logger.info(f'Writing params file: {s3_params_path}')
-        s3_params_path.write_text(params.model_dump_json(indent=4))
+        logger.info(f'Writing params file: {params.json_path}')
+        params.json_path.write_text(params.model_dump_json(indent=4))
     
     logger.info(f'starting decode_context_with_linear_shift with {params.model_dump()}')
     decoding_utils.decode_context_with_linear_shift(session_ids=session_ids, params=params)

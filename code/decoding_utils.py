@@ -293,7 +293,8 @@ def wrap_decoder_helper(
             pl.lit(session_id).alias('session_id'),
             pl.lit(structure).alias('structure'),
             pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
-            pl.lit(params.n_units).alias('n_units'),
+            pl.lit(str(params.n_units)).alias('n_units').cast(pl.Categorical),
+            pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
         )
         .write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
         # .write_delta(params.data_path.as_posix(), mode='append')
