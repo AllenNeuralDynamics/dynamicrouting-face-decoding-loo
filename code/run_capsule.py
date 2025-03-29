@@ -92,22 +92,13 @@ class Params(pydantic_settings.BaseSettings):
     """ set penalty for the decoder. Setting to None reverts to default """
     solver: str | None = None
     """ set solver for the decoder. Setting to None reverts to default """
-    split_area_by_probe: bool = True
-    """ splits area units by probe if recorded by more than one probe"""
-
+    units_group_by: list[str] = ['session_id', 'structure', 'electrode_group_names']
+    
     @property
     def data_path(self) -> upath.UPath:
         """Path to delta lake on S3"""
         return upath.UPath("s3://aind-scratch-data/dynamic-routing/ben/decoding") /f"{'_'.join([self.result_prefix, self.run_id])}"
 
-    @pydantic.computed_field(repr=False)
-    @property
-    def units_group_by(self) -> list[Expr]:
-        if self.split_area_by_probe:
-            return [pl.col('session_id'), pl.col('structure'), pl.col('electrode_group_name')]
-        else:
-            return [pl.col('session_id'), pl.col('structure')]
-    
     @pydantic.computed_field(repr=False)
     @property
     def units_query(self) -> Expr:

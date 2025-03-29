@@ -1,4 +1,5 @@
 import os
+import random
 os.environ['RUST_BACKTRACE'] = '1'
 os.environ['POLARS_MAX_THREADS'] = '1'
 os.environ['TOKIO_WORKER_THREADS'] = '1' 
@@ -10,7 +11,7 @@ import logging
 import math
 import multiprocessing
 import uuid
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import polars as pl
@@ -49,9 +50,41 @@ def group_structures(frame: polars._typing.FrameType, keep_originals=False) -> p
             .then(pl.col('structure').replace(grouping))
             .otherwise(pl.col('structure'))
         )
+    
     )
     return frame 
 
+def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.FrameType:
+    """"If an area is recorded on multiple probes, transform the dataframe so it has rows for each
+    probe and a row for both probes combined ('electrode_group_names': List[String])"""
+    return (
+        frame
+        # create list of probe names per session-structure:
+        .group_by('session_id', 'structure')
+        .agg(
+            pl.col('electrode_group_name').alias('electrode_group_names')
+        )
+        # duplicate those with multiple probes (col becomes List[List[String]]):
+        .with_columns(
+            pl.when(pl.col('electrode_group_names').list.n_unique().gt(1))
+            .then(pl.col('electrode_group_names').repeat_by(2))
+            .otherwise(pl.col('electrode_group_names').repeat_by(1))
+        )
+        .explode('electrode_group_names')
+        # convert the duplicated rows to joined 'probeA_probeB' format:
+        .with_columns(
+            pl.when(pl.col('electrode_group_names').is_first_distinct().over('session_id', 'structure'))
+            .then(pl.col('electrode_group_names'))
+            .otherwise(pl.col('electrode_group_names').list.join('_').cast(pl.List(pl.String)))
+        )
+        # create individual lists vs single list for duplicate/non-duplicate rows:
+        # [probeA, probeB] vs [[probeA], [probeB]]
+        .with_columns(
+            pl.col('electrode_group_names').list.eval(pl.element().str.split('_'))
+        )
+        .explode('electrode_group_names')
+    )
+    
 def get_filtered_units(params) -> pl.LazyFrame:
     frame = (
         utils.get_df('units', lazy=True)
@@ -59,6 +92,7 @@ def get_filtered_units(params) -> pl.LazyFrame:
             params.units_query,
         )
         .pipe(group_structures, keep_originals=True)
+        .pipe(repeat_multi_probe_areas)
         .filter(
             pl.col('unit_id').n_unique().ge(params.n_units).over(params.units_group_by)
         )
@@ -138,7 +172,7 @@ def wrap_decoder_helper(
     params,
     session_id: str,
     structure: str,
-    electrode_group_name: str | None = None,
+    electrode_group_names: Sequence[str] | None = None,
 ):
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     spike_counts_df = utils.get_per_trial_spike_times(
@@ -151,7 +185,7 @@ def wrap_decoder_helper(
             .filter(
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                pl.lit(True) if electrode_group_name is None else pl.col('electrode_group_name').eq(electrode_group_name),
+                pl.lit(True) if electrode_group_names is None else pl.col('electrode_group_names').is_in(electrode_group_names),
             )
             .select('unit_id')
             .collect()
@@ -180,10 +214,27 @@ def wrap_decoder_helper(
         .select('context_name', 'trial_index', 'block_index')
         .collect()
     )
-    logger.debug(f"Got {len(trials)} trials")
-    
-    if trials.n_unique('block_index') != 6:
+    if (
+        trials.n_unique('block_index') == 1
+        and utils.get_df('session').filter(pl.col('session_id') == trials['session_id'][0])['keywords'].list.contains('templeton')
+    ):
+        logger.info(f'Adding dummy block labels for Templeton session {session_id}')
+        trials = (
+            trials
+            .with_columns(
+                pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().alias('ten_min_block_index')
+            )
+            .with_columns(
+                pl.when(pl.col('ten_min_block_index').mod(2).eq(random.choice([0, 1])))
+                .then(pl.lit('vis'))
+                .otherwise(pl.lit('aud'))
+                .alias('context_name')
+            )
+            .drop('ten_min_block_index')
+        )
+    elif trials.n_unique('block_index') != 6:
         raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks')
+    logger.debug(f"Got {len(trials)} trials")
 
     neg = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
     pos = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -252,7 +303,7 @@ def wrap_decoder_helper(
         .with_columns(
             pl.lit(session_id).alias('session_id'),
             pl.lit(structure).alias('structure'),
-            pl.lit(electrode_group_name).alias('electrode_group_name'),
+            pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
             pl.lit(params.n_units).alias('n_units'),
         )
         #.write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
