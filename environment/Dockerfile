@@ -1,4 +1,4 @@
-# hash:sha256:de1db762d49cfd9e2acf243cde6a6b94a2b3e59731c3eb7197e17cc617fdab3f
+# hash:sha256:9417ba4cc38a4a7e98dda33be5fd9c33a2a25174bbe477f987bfb5b1a2e3d2f3
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -14,6 +14,9 @@ COPY git-askpass /
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV OPENBLAS_NUM_THREADS=1
+ENV TOKIO_WORKER_THREADS=1
+ENV RAYON_NUM_THREADS=1
+ENV POLARS_MAX_THREADS=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -21,12 +24,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install -U --no-cache-dir \
+    aind-data-schema==1.1.1 \
     aind-data-schema-models==0.5.7 \
     code-ocean-aux-tools==1.1.3 \
     hdmf==3.14.6 \
     numba==0.60.0 \
     pandas[all]==2.2.3 \
     polars[plot,deltalake]==1.26.0 \
+    pydantic==2.7.4 \
     pynwb==2.8.2 \
     s3fs==2024.10.0 \
     scikit-learn==1.5.2 \
