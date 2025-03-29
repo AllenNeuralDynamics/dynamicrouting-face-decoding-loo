@@ -57,36 +57,24 @@ def group_structures(frame: polars._typing.FrameType, keep_originals=False) -> p
 def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.FrameType:
     """"If an area is recorded on multiple probes, transform the dataframe so it has rows for each
     probe and a row for both probes combined ('electrode_group_names': List[String])"""
-    return (
+    duplicates =  (
         frame
-        # create list of probe names per session-structure:
-        .group_by('session_id', 'structure')
-        .agg(
-            pl.all().exclude('electrode_group_name'),
-            pl.col('electrode_group_name').unique().alias('electrode_group_names'),
-        )
-        # duplicate those with multiple probes (col becomes List[List[String]]):
+        .clone()
         .with_columns(
-            pl.when(pl.col('electrode_group_names').list.n_unique().gt(1))
-            .then(pl.col('electrode_group_names').repeat_by(2))
-            .otherwise(pl.col('electrode_group_names').repeat_by(1))
+             pl.col('electrode_group_name').unique().over('session_id', 'structure', mapping_strategy='join').alias('electrode_group_names')
+         )
+        .filter(
+             pl.col('electrode_group_names').list.len().ge(2)
+         )
+    )
+    return (
+        pl.concat(
+            [
+                frame.with_columns(pl.col('electrode_group_name').cast(pl.List(pl.String)).alias('electrode_group_names')),
+                duplicates,
+            ],
         )
-        # # .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
-        .explode('electrode_group_names')
-
-        # convert the duplicated rows to joined 'probeA_probeB' format:
-        .with_columns(
-            pl.when(pl.col('electrode_group_names').is_first_distinct().over('session_id', 'structure'))
-            .then(pl.col('electrode_group_names'))
-            .otherwise(pl.col('electrode_group_names').list.join('_').cast(pl.List(pl.String)))
-        )
-        # create individual lists vs single list for duplicate/non-duplicate rows:
-        # [probeA, probeB] vs [[probeA], [probeB]]
-        .with_columns(
-            pl.col('electrode_group_names').list.eval(pl.element().str.split('_'))
-        )
-        .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
-        .explode('electrode_group_names')
+        .drop('electrode_group_name')
     )
 
 def decode_context_with_linear_shift(
@@ -98,6 +86,7 @@ def decode_context_with_linear_shift(
 
     combinations_df = (
         utils.get_df('units', lazy=True)
+        .drop_nulls('structure')
         .filter(
             pl.col('session_id').is_in(session_ids),
             params.units_query,
@@ -105,7 +94,7 @@ def decode_context_with_linear_shift(
         .pipe(group_structures, keep_originals=True)
         .pipe(repeat_multi_probe_areas)
         .filter(
-            pl.col('unit_id').n_unique().ge(params.n_units).over(params.units_group_by)
+            pl.col('unit_id').n_unique().over(params.units_group_by).ge(params.n_units)
         )
         .select(params.units_group_by)
         .unique(params.units_group_by)
@@ -245,7 +234,7 @@ def wrap_decoder_helper(
     n_possible_samples = math.comb(len(unit_ids), params.n_units)
     if params.n_repeats > n_possible_samples:
         n_repeats = n_possible_samples
-        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=})")
+        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=}) {session_id}, {structure}, {electrode_group_names}")
     else:
         n_repeats = params.n_repeats
     unit_samples: list[set[int]] = []
@@ -303,8 +292,8 @@ def wrap_decoder_helper(
             pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
             pl.lit(params.n_units).alias('n_units'),
         )
-        #.write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
-        .write_delta(params.data_path.as_posix(), mode='append')
+        .write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
+        # .write_delta(params.data_path.as_posix(), mode='append')
 
     )
     logger.info(f"Completed decoding for session {session_id}, structure {structure}")
