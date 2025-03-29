@@ -182,7 +182,7 @@ def wrap_decoder_helper(
                 params.units_query,
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                pl.col('electrode_group_name') == list(electrode_group_names),
+                pl.col('electrode_group_name').is_in(electrode_group_names),
             )
             .select('unit_id')
             .collect()
