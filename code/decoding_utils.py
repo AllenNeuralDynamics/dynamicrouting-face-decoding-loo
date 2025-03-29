@@ -1,7 +1,15 @@
+import os
+os.environ['RUST_BACKTRACE'] = '1'
+os.environ['POLARS_MAX_THREADS'] = '1'
+os.environ['TOKIO_WORKER_THREADS'] = '1' 
+os.environ['OPENBLAS_NUM_THREADS'] = '1' 
+os.environ['RAYON_NUM_THREADS'] = '1'
+
 import concurrent.futures as cf
 import logging
 import math
 import multiprocessing
+import uuid
 from typing import Iterable
 
 import numpy as np
@@ -73,12 +81,20 @@ def decode_context_with_linear_shift(
         .unique(params.units_group_by)
         .collect()
     )
+    if params.skip_existing and (params.data_path / '_delta_log').exists():
+        existing = pl.scan_delta(params.data_path.as_posix()).select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
+    else:
+        existing = []
+
     logger.info(f"Processing {len(areas)} unique session/area/probe combinations")
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
-        with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('spawn')) as executor:
+        with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('forkserver')) as executor:
             for row in areas.iter_rows(named=True):
+                if params.skip_existing and row in existing:
+                    logger.info(f"Skipping {row} - results already exist")
+                    continue
                 future = executor.submit(
                     wrap_decoder_helper,
                     params=params,
@@ -101,12 +117,17 @@ def decode_context_with_linear_shift(
                             logger.exception(f'{session_id} | Failed:')
                     logger.info(f'{session_id} | Completed')
     else: # single-process mode
-        for row in tqdm.tqdm(areas.iter_rows(named=True), total=len(areas), unit='row', desc=f'decoding {session_id}'):
+        for row in tqdm.tqdm(areas.iter_rows(named=True), total=len(areas), unit='row', desc=f'decoding'):
+            if params.skip_existing and row in existing:
+                logger.info(f"Skipping {row} - results already exist")
+                continue
             try:
                 wrap_decoder_helper(
                     params=params,
                     **row,
                 )
+            except NotEnoughBlocksError:
+                logger.warning(f'{row["session_id"]} | NotEnoughBlocksError')
             except Exception:
                 logger.exception(f'{row["session_id"]} | Failed:')
             if params.test:
@@ -119,21 +140,6 @@ def wrap_decoder_helper(
     structure: str,
     electrode_group_name: str | None = None,
 ):
-    if params.skip_existing and params.data_path.exists():
-        delta_df = (
-            pl.scan_delta(params.data_path.as_posix())
-            .filter(
-                pl.col('session_id') == session_id,
-                pl.col('structure') == structure,
-            )
-        )
-        if electrode_group_name is not None:
-            delta_df = delta_df.filter(pl.col('electrode_group_name') == electrode_group_name)
-        session_results = delta_df.collect()
-        if not session_results.is_empty():
-            logger.info(f"Skipping {session_id} {structure} {electrode_group_name} - results already exist")
-            return 
-    
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     spike_counts_df = utils.get_per_trial_spike_times(
         intervals={
@@ -249,7 +255,9 @@ def wrap_decoder_helper(
             pl.lit(electrode_group_name).alias('electrode_group_name'),
             pl.lit(params.n_units).alias('n_units'),
         )
+        #.write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
         .write_delta(params.data_path.as_posix(), mode='append')
+
     )
     logger.info(f"Completed decoding for session {session_id}, structure {structure}")
     # return results
