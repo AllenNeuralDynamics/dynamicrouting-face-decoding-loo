@@ -85,7 +85,7 @@ def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.
         .with_columns(
             pl.col('electrode_group_names').list.eval(pl.element().str.split('_'))
         )
-         .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
+        .explode(pl.all().exclude('session_id', 'structure', 'electrode_group_names'))
         .explode('electrode_group_names')
     )
 
@@ -168,7 +168,7 @@ def wrap_decoder_helper(
     params,
     session_id: str,
     structure: str,
-    electrode_group_names: Sequence[str] | None = None,
+    electrode_group_names: Sequence[str],
 ):
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     spike_counts_df = utils.get_per_trial_spike_times(
@@ -182,7 +182,7 @@ def wrap_decoder_helper(
                 params.units_query,
                 pl.col('session_id') == session_id,
                 pl.col('structure') == structure,
-                pl.lit(True) if electrode_group_names is None else pl.col('electrode_group_name').is_in(electrode_group_names),
+                pl.col('electrode_group_name') == list(electrode_group_names),
             )
             .select('unit_id')
             .collect()
