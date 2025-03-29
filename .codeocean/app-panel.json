@@ -6,7 +6,7 @@
 			"id": "x52gWS7EBuAj6nGG",
 			"name": "result_prefix",
 			"param_name": "result_prefix",
-			"description": "A unique string that should be attached to all decoding runs in the same batch - used for naming folders/files on S3",
+			"description": "\"project level\" name of data folder",
 			"type": "text",
 			"value_type": "string",
 			"required": true
@@ -15,7 +15,7 @@
 			"id": "uxoZwW2rMVHw8rAt",
 			"name": "run_id",
 			"param_name": "run_id",
-			"description": "high level description of run to include in folder name",
+			"description": "A unique suffix that should be used for all decoding runs within a parameter sweep - defaults to datetime",
 			"type": "text",
 			"value_type": "string"
 		},
