@@ -62,7 +62,8 @@ def repeat_multi_probe_areas(frame: polars._typing.FrameType) -> polars._typing.
         # create list of probe names per session-structure:
         .group_by('session_id', 'structure')
         .agg(
-            pl.col('electrode_group_name').alias('electrode_group_names')
+            pl.all().exclude('electrode_group_name'),
+            pl.col('electrode_group_name').alias('electrode_group_names'),
         )
         # duplicate those with multiple probes (col becomes List[List[String]]):
         .with_columns(
