@@ -35,6 +35,12 @@ def group_structures(frame: polars._typing.FrameType, keep_originals=False) -> p
         'SCiw': 'SCm',
         'SCdg': 'SCm',
         'SCdw': 'SCm',
+        "ECT1": 'ECT',
+        "ECT2/3": 'ECT',    
+        "ECT6b": 'ECT',
+        "ECT5": 'ECT',
+        "ECT6a": 'ECT', 
+        "ECT4": 'ECT',
     }
     n_repeats = 2 if keep_originals else 1
     frame = (
@@ -93,15 +99,13 @@ def decode_context_with_linear_shift(
         )
         .pipe(group_structures, keep_originals=True)
         .pipe(repeat_multi_probe_areas)
-        .filter(
-            pl.col('unit_id').n_unique().over(params.units_group_by).ge(params.n_units)
-        )
+        .filter(params.min_n_units_query)
         .select(params.units_group_by)
         .unique(params.units_group_by)
         .collect()
     )
-    if params.skip_existing and (params.data_path / '_delta_log').exists():
-        existing = pl.scan_delta(params.data_path.as_posix()).select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
+    if params.skip_existing and params.data_path.exists():
+        existing = pl.scan_parquet(params.data_path.as_posix()).select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
     else:
         existing = []
 
@@ -197,31 +201,36 @@ def wrap_decoder_helper(
         utils.get_df('trials', lazy=True)
         .filter(pl.col('session_id') == session_id)
         .sort('trial_index')
-        .select('context_name', 'trial_index', 'block_index', 'session_id')
+        .select('context_name', 'start_time', 'trial_index', 'block_index', 'session_id')
         .collect()
     )
     if (
-        trials.n_unique('block_index') == 1
-        and utils.get_df('session').filter(pl.col('session_id') == trials['session_id'][0])['keywords'].list.contains('templeton')
+        trials['block_index'].n_unique() == 1
+        and not (
+            utils.get_df('session')
+            .filter(
+                pl.col('session_id') == trials['session_id'][0],
+                pl.col('keywords').list.contains('templeton'),
+            )
+        ).is_empty()
     ):
         logger.info(f'Adding dummy block labels for Templeton session {session_id}')
         trials = (
             trials
             .with_columns(
-                pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().alias('ten_min_block_index')
+                pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().alias('block_index')
             )
             .filter(
-                pl.col('ten_min_block_index').lt(6), # discard a short 7th block if present
+                pl.col('block_index').lt(6), # discard a short 7th block if present
             )
             .with_columns(
-                pl.when(pl.col('ten_min_block_index').mod(2).eq(random.choice([0, 1])))
+                pl.when(pl.col('block_index').mod(2).eq(random.choice([0, 1])))
                 .then(pl.lit('vis'))
                 .otherwise(pl.lit('aud'))
                 .alias('context_name')
             )
-            .drop('ten_min_block_index')
         )
-    elif trials.n_unique('block_index') != 6:
+    if trials.n_unique('block_index') != 6:
         raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks')
     logger.debug(f"Got {len(trials)} trials")
 
@@ -231,13 +240,15 @@ def wrap_decoder_helper(
     shifts = tuple(range(-neg, pos+1))
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
+    n_units = params.min_n_units or len(unit_ids)
+    
     results = []
     # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
     # get the min number of repeats possible to avoid unnecessary work:
-    n_possible_samples = math.comb(len(unit_ids), params.n_units)
+    n_possible_samples = math.comb(len(unit_ids), n_units)
     if params.n_repeats > n_possible_samples:
         n_repeats = n_possible_samples
-        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.n_units=}, {len(unit_ids)=}) {session_id}, {structure}, {electrode_group_names}")
+        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.min_n_units=}, {len(unit_ids)=}) {session_id}, {structure}, {electrode_group_names}")
     else:
         n_repeats = params.n_repeats
     unit_samples: list[set[int]] = []
@@ -245,7 +256,7 @@ def wrap_decoder_helper(
         
         # ensure we don't sample the same set of units twice when we have few units:
         while True:
-            sel_units = set(np.random.choice(np.arange(0, len(unit_ids)), params.n_units, replace=False))
+            sel_units = set(np.random.choice(np.arange(0, len(unit_ids)), n_units, replace=False))
             if sel_units not in unit_samples:
                 unit_samples.append(sel_units)
                 break
@@ -293,10 +304,21 @@ def wrap_decoder_helper(
             pl.lit(session_id).alias('session_id'),
             pl.lit(structure).alias('structure'),
             pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
-            pl.lit(str(params.n_units)).alias('n_units').cast(pl.Categorical),
+            pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
+            pl.lit(n_units).alias('n_units').cast(pl.UInt16),
             pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
         )
-        .write_parquet((params.data_path / f"{uuid.uuid4()}.parquet").as_posix())
+        .cast(
+            {
+                'shift_idx': pl.UInt8,
+                'repeat_idx': pl.UInt8,
+            }
+        )
+        .write_parquet(
+            (params.data_path / f"{uuid.uuid4()}.parquet").as_posix(),
+            compression_level=18,
+            statistics='full',    
+        )
         # .write_delta(params.data_path.as_posix(), mode='append')
 
     )

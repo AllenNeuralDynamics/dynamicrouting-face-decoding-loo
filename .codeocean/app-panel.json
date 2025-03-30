@@ -46,11 +46,10 @@
 		},
 		{
 			"id": "TodaD5cDUuK1OCzO",
-			"name": "n_units",
-			"param_name": "n_units",
+			"name": "min_n_units",
+			"param_name": "min_n_units",
 			"type": "text",
-			"value_type": "string",
-			"default_value": "all"
+			"value_type": "integer"
 		},
 		{
 			"id": "CLnGBLMVID8fEr6c",

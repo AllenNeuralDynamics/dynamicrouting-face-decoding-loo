@@ -73,7 +73,7 @@ class Params(pydantic_settings.BaseSettings):
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     unit_criteria: str = pydantic.Field("medium", exclude=True) # often varied, stoed in data not params file
-    n_units: int = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
+    min_n_units: int | None = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
@@ -102,7 +102,14 @@ class Params(pydantic_settings.BaseSettings):
     @property
     def json_path(self) -> upath.UPath:
         """Path to params json on S3"""
-        return data_path.with_suffix('.json')
+        return self.data_path.with_suffix('.json')
+
+    @property
+    def min_n_units_query(self) -> Expr:
+        if self.min_n_units is None:
+            return pl.lit(True)
+        else:
+            return pl.col('unit_id').n_unique().over(self.units_group_by).ge(self.min_n_units)
 
     @property
     def units_query(self) -> Expr:
@@ -121,13 +128,13 @@ class Params(pydantic_settings.BaseSettings):
             
             'recalc_presence_ratio': (pl.col('sliding_rp_violation') <= 0.1) & (pl.col('presence_ratio_task') >= 0.99) & (pl.col('amplitude_cutoff') <= 0.1),
             
-            'no_drift': basic_drift,
+            'no_drift': drift_base,
             
-            'loose_drift': basic_drift & (pl.col('activity_drift') <= 0.2)
+            'loose_drift': drift_base & (pl.col('activity_drift') <= 0.2),
             
-            'medium_drift': basic_drift & (pl.col('activity_drift') <= 0.15),
+            'medium_drift': drift_base & (pl.col('activity_drift') <= 0.15),
             
-            'strict_drift': basic_drift & (pl.col('activity_drift') <= 0.1),
+            'strict_drift': drift_base & (pl.col('activity_drift') <= 0.1),
         }
         
     # set the priority of the sources:
@@ -165,7 +172,7 @@ def main():
     if params.test:
         params = Params(
             result_prefix=f"test/{params.result_prefix}",
-            n_units=20,
+            min_n_units=20,
             n_repeats=1,
         )
         logger.info("Test mode: using modified set of parameters")
