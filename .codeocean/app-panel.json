@@ -85,7 +85,7 @@
 			"description": "Run the capsule in test mode, which should finish quickly",
 			"type": "text",
 			"value_type": "integer",
-			"default_value": "1",
+			"default_value": "0",
 			"maximum": 1
 		},
 		{

@@ -61,7 +61,7 @@ class Params(pydantic_settings.BaseSettings):
     """If provided, only process this session_id. Otherwise, process all sessions that match the filtering criteria"""
     run_id: str = pydantic.Field(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")) # created at runtime: same for all Params instances 
     """A unique string that should be attached to all decoding runs in the same batch"""
-    skip_existing: bool = pydantic.Field(False, exclude=True)
+    skip_existing: bool = pydantic.Field(True, exclude=True)
     test: bool = pydantic.Field(False, exclude=True)
     logging_level: str | int = pydantic.Field('INFO', exclude=True)
     update_packages_from_source: bool = pydantic.Field(False, exclude=True)
@@ -73,7 +73,7 @@ class Params(pydantic_settings.BaseSettings):
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     unit_criteria: str = pydantic.Field("medium", exclude=True) # often varied, stoed in data not params file
-    min_n_units: int | None = pydantic.Field(25, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
+    min_n_units: int | None = pydantic.Field(None, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
