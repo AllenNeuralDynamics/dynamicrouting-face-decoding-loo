@@ -372,6 +372,8 @@ def get_per_trial_spike_times(
             unit_ids = (unit_ids,)
         elif isinstance(unit_ids, Generator):
             unit_ids = tuple(unit_ids)
+        if not tuple(unit_ids):
+            raise ValueError(f'unit_ids must be None or a non-empty iterable')
         units_df = get_df('units').select(units_df_cols).filter(pl.col('unit_id').is_in(unit_ids))
     
     if isinstance(trials_frame, str):

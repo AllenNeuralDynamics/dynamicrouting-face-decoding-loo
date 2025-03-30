@@ -7,6 +7,7 @@ os.environ['OPENBLAS_NUM_THREADS'] = '1'
 os.environ['RAYON_NUM_THREADS'] = '1'
 
 import concurrent.futures as cf
+import contextlib
 import logging
 import math
 import multiprocessing
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
     
-def group_structures(frame: polars._typing.FrameType, keep_originals=False) -> polars._typing.FrameType:
+def group_structures(frame: polars._typing.FrameType, keep_originals=True) -> polars._typing.FrameType:
     grouping = {
         'SCop': 'SCs',
         'SCsg': 'SCs',
@@ -105,23 +106,32 @@ def decode_context_with_linear_shift(
         .collect()
     )
     if params.skip_existing and params.data_path.exists():
-        existing = pl.scan_parquet(params.data_path.as_posix()).select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
+        existing = pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/').select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
     else:
         existing = []
-
+    def is_row_in_existing(row):
+        """Regular dict comparison doesn't work with list field?"""
+        return any(
+            x for x in existing 
+            if all(x[k] == row[k] for k in ['session_id', 'structure'])
+            and set(x['electrode_group_names']) == set(row['electrode_group_names'])
+        )
+        
     logger.info(f"Processing {len(combinations_df)} unique session/area/probe combinations")
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
-        with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('forkserver')) as executor:
+        lock = None # multiprocessing.Lock()
+        with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('spawn')) as executor:
             for row in combinations_df.iter_rows(named=True):
-                if params.skip_existing and row in existing:
+                if params.skip_existing and is_row_in_existing(row):
                     logger.info(f"Skipping {row} - results already exist")
                     continue
                 future = executor.submit(
                     wrap_decoder_helper,
                     params=params,
                     **row,
+                    lock=lock,
                 )
                 session_results.setdefault(row['session_id'], []).append(future)
                 future_to_session[future] = row['session_id']
@@ -139,18 +149,19 @@ def decode_context_with_linear_shift(
                         except Exception:
                             logger.exception(f'{session_id} | Failed:')
                     logger.info(f'{session_id} | Completed')
+                    
     else: # single-process mode
         for row in tqdm.tqdm(combinations_df.iter_rows(named=True), total=len(combinations_df), unit='row', desc=f'decoding'):
-            if params.skip_existing and row in existing:
+            if params.skip_existing and is_row_in_existing(row):
                 logger.info(f"Skipping {row} - results already exist")
                 continue
             try:
                 wrap_decoder_helper(
-                    params=params,
-                    **row,
-                )
-            except NotEnoughBlocksError:
-                logger.warning(f'{row["session_id"]} | NotEnoughBlocksError')
+                        params=params,
+                        **row,
+                    )
+            except NotEnoughBlocksError as exc:
+                logger.warning(f'{row["session_id"]} | {exc!r}')
             except Exception:
                 logger.exception(f'{row["session_id"]} | Failed:')
             if params.test:
@@ -162,6 +173,7 @@ def wrap_decoder_helper(
     session_id: str,
     structure: str,
     electrode_group_names: Sequence[str],
+    lock = None,
 ):
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     spike_counts_df = utils.get_per_trial_spike_times(
@@ -171,6 +183,7 @@ def wrap_decoder_helper(
         as_counts=True,
         unit_ids=(
             utils.get_df('units', lazy=True)
+            .pipe(group_structures)
             .filter(
                 params.units_query,
                 pl.col('session_id') == session_id,
@@ -298,29 +311,29 @@ def wrap_decoder_helper(
                 break
         if params.test:
             break
-    (
-        pl.DataFrame(results)
-        .with_columns(
-            pl.lit(session_id).alias('session_id'),
-            pl.lit(structure).alias('structure'),
-            pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
-            pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
-            pl.lit(n_units).alias('n_units').cast(pl.UInt16),
-            pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
+    with lock or contextlib.nullcontext():
+        (
+            pl.DataFrame(results)
+            .with_columns(
+                pl.lit(session_id).alias('session_id'),
+                pl.lit(structure).alias('structure'),
+                pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
+                pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
+                pl.lit(n_units).alias('n_units').cast(pl.UInt16),
+                pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
+            )
+            .cast(
+                {
+                    'shift_idx': pl.Int8,
+                    'repeat_idx': pl.UInt8,
+                }
+            )
+            .write_parquet(
+                (params.data_path / f"{uuid.uuid4()}.parquet").as_posix(),
+                compression_level=18,
+                statistics='full',    
+            )
+            # .write_delta(params.data_path.as_posix(), mode='append')
         )
-        .cast(
-            {
-                'shift_idx': pl.UInt8,
-                'repeat_idx': pl.UInt8,
-            }
-        )
-        .write_parquet(
-            (params.data_path / f"{uuid.uuid4()}.parquet").as_posix(),
-            compression_level=18,
-            statistics='full',    
-        )
-        # .write_delta(params.data_path.as_posix(), mode='append')
-
-    )
     logger.info(f"Completed decoding for session {session_id}, structure {structure}")
     # return results
