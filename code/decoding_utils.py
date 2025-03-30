@@ -106,7 +106,17 @@ def decode_context_with_linear_shift(
         .collect()
     )
     if params.skip_existing and params.data_path.exists():
-        existing = pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/').select(params.units_group_by).unique(params.units_group_by).collect().to_dicts()
+        existing = (
+            pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/')
+            .filter(
+                pl.col('min_n_units') == params.min_n_units,
+                pl.col('unit_criteria') == params.unit_criteria,
+            )
+            .select(params.units_group_by)
+            .unique(params.units_group_by)
+            .collect()
+            .to_dicts()
+        )
     else:
         existing = []
     def is_row_in_existing(row):
@@ -176,26 +186,34 @@ def wrap_decoder_helper(
     lock = None,
 ):
     logger.debug(f"Getting units and trials for {session_id} {structure}")
-    spike_counts_df = utils.get_per_trial_spike_times(
-        intervals={
-            'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_start_time')),
-        },
-        as_counts=True,
-        unit_ids=(
-            utils.get_df('units', lazy=True)
-            .pipe(group_structures)
-            .filter(
-                params.units_query,
-                pl.col('session_id') == session_id,
-                pl.col('structure') == structure,
-                pl.col('electrode_group_name').is_in(electrode_group_names),
-            )
-            .select('unit_id')
-            .collect()
-            ['unit_id']
-            .unique()
-        ),
-    ).sort('trial_index', 'unit_id') # len == n_units x n_trials, with spike counts in a column
+    spike_counts_df = (
+        utils.get_per_trial_spike_times(
+            intervals={
+                'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_start_time')),
+            },
+            as_counts=True,
+            unit_ids=(
+                utils.get_df('units', lazy=True)
+                .pipe(group_structures)
+                .filter(
+                    params.units_query,
+                    pl.col('session_id') == session_id,
+                    pl.col('structure') == structure,
+                    pl.col('electrode_group_name').is_in(electrode_group_names),
+                )
+                .select('unit_id')
+                .collect()
+                ['unit_id']
+                .unique()
+            ),
+        )
+        .filter(
+            pl.col('n_spikes_baseline').is_not_null(),
+            # only keep observed trials
+        )
+        .sort('trial_index', 'unit_id') 
+    )
+    # len == n_units x n_trials, with spike counts in a column
     # sequence of unit_ids is used later: don't re-sort!
     
     logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
@@ -212,7 +230,11 @@ def wrap_decoder_helper(
     unit_ids = spike_counts_df['unit_id'].unique()
     trials = (
         utils.get_df('trials', lazy=True)
-        .filter(pl.col('session_id') == session_id)
+        .filter(
+            pl.col('session_id') == session_id,
+            pl.col('trial_index').is_in(spike_counts_df['trial_index'].unique()),
+            # obs_intervals may affect number of trials available
+        )
         .sort('trial_index')
         .select('context_name', 'start_time', 'trial_index', 'block_index', 'session_id')
         .collect()
@@ -244,7 +266,7 @@ def wrap_decoder_helper(
             )
         )
     if trials.n_unique('block_index') != 6:
-        raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks')
+        raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
     logger.debug(f"Got {len(trials)} trials")
 
     neg = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
