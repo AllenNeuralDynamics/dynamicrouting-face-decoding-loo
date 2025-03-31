@@ -109,7 +109,7 @@ def decode_context_with_linear_shift(
         existing = (
             pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/')
             .filter(
-                pl.col('min_n_units') == params.min_n_units,
+                pl.col('min_n_units').is_null() if params.min_n_units is None else pl.col('min_n_units').eq(params.min_n_units),
                 pl.col('unit_criteria') == params.unit_criteria,
             )
             .select(params.units_group_by)
@@ -253,10 +253,8 @@ def wrap_decoder_helper(
         trials = (
             trials
             .with_columns(
-                pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().alias('block_index')
-            )
-            .filter(
-                pl.col('block_index').lt(6), # discard a short 7th block if present
+                pl.col('start_time').sub(pl.col('start_time').min().over('session_id')).truediv(10*60).floor().clip(0, 5).alias('block_index')
+                # short 7th block will sometimes be present: merge into 6th with clip
             )
             .with_columns(
                 pl.when(pl.col('block_index').mod(2).eq(random.choice([0, 1])))

@@ -57,23 +57,23 @@ class Params(pydantic_settings.BaseSettings):
     # ----------------------------------------------------------------------------------
     
     # Capsule-specific parameters -------------------------------------- #
-    session_id: str | None = pydantic.Field(None, exclude=True)
+    session_id: str | None = pydantic.Field(None, exclude=True, repr=True)
     """If provided, only process this session_id. Otherwise, process all sessions that match the filtering criteria"""
     run_id: str = pydantic.Field(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")) # created at runtime: same for all Params instances 
     """A unique string that should be attached to all decoding runs in the same batch"""
-    skip_existing: bool = pydantic.Field(True, exclude=True)
+    skip_existing: bool = pydantic.Field(True, exclude=True, repr=True)
     test: bool = pydantic.Field(False, exclude=True)
     logging_level: str | int = pydantic.Field('INFO', exclude=True)
     update_packages_from_source: bool = pydantic.Field(False, exclude=True)
     override_params_json: str | None = pydantic.Field('{}', exclude=True)
-    use_process_pool: bool = pydantic.Field(True, exclude=True)
-    max_workers: int | None = pydantic.Field(None, exclude=True)
+    use_process_pool: bool = pydantic.Field(True, exclude=True, repr=True)
+    max_workers: int | None = pydantic.Field(None, exclude=True, repr=True)
     """For process pool"""
 
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    unit_criteria: str = pydantic.Field("medium", exclude=True) # often varied, stoed in data not params file
-    min_n_units: int | None = pydantic.Field(None, exclude=True) # n_units is often varied, so will be stored with data, not in the params file
+    unit_criteria: str = pydantic.Field("medium", exclude=True, repr=True) # often varied, stoed in data not params file
+    min_n_units: int | None = pydantic.Field(None, exclude=True, repr=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
@@ -206,7 +206,7 @@ def main():
         logger.info(f'Writing params file: {params.json_path}')
         params.json_path.write_text(params.model_dump_json(indent=4))
     
-    logger.info(f'starting decode_context_with_linear_shift with {params.model_dump()}')
+    logger.info(f'starting decode_context_with_linear_shift with {params!r}')
     decoding_utils.decode_context_with_linear_shift(session_ids=session_ids, params=params)
     
     utils.ensure_nonempty_results_dir()
