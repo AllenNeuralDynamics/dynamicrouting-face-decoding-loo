@@ -97,7 +97,7 @@ class Params(pydantic_settings.BaseSettings):
     @property
     def data_path(self) -> upath.UPath:
         """Path to delta lake on S3"""
-        return upath.UPath("s3://aind-scratch-data/dynamic-routing/ben/decoding") /f"{'_'.join([self.result_prefix, self.run_id])}"
+        return upath.UPath("s3://aind-scratch-data/dynamic-routing/decoding/results") /f"{'_'.join([self.result_prefix, self.run_id])}"
 
     @property
     def json_path(self) -> upath.UPath:
