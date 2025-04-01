@@ -249,7 +249,7 @@ def wrap_decoder_helper(
             )
         ).is_empty()
     ):
-        logger.info(f'Adding dummy block labels for Templeton session {session_id}')
+        logger.info(f'Adding dummy context labels for Templeton session {session_id}')
         trials = (
             trials
             .with_columns(
@@ -267,10 +267,11 @@ def wrap_decoder_helper(
         raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
     logger.debug(f"Got {len(trials)} trials")
 
-    neg = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
-    pos = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
-    labels = trials.sort('trial_index')['context_name'].to_numpy().squeeze()[neg: -pos]
-    shifts = tuple(range(-neg, pos+1))
+    context_labels = trials.sort('trial_index')['context_name'].to_numpy().squeeze()
+
+    max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
+    max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
+    shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
     n_units = params.min_n_units or len(unit_ids)
@@ -278,14 +279,15 @@ def wrap_decoder_helper(
     results = []
     # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
     # get the min number of repeats possible to avoid unnecessary work:
+    IGNORE_MIN_REPEATS = True
     n_possible_samples = math.comb(len(unit_ids), n_units)
-    if params.n_repeats > n_possible_samples:
+    if not IGNORE_MIN_REPEATS and params.n_repeats > n_possible_samples:
         n_repeats = n_possible_samples
         logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.min_n_units=}, {len(unit_ids)=}) {session_id}, {structure}, {electrode_group_names}")
     else:
         n_repeats = params.n_repeats
     unit_samples: list[set[int]] = []
-    for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure}|{session_id}'):
+    for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
         
         # ensure we don't sample the same set of units twice when we have few units:
         while True:
@@ -296,16 +298,24 @@ def wrap_decoder_helper(
             
         logger.debug(f"Repeat {repeat_idx}: selected {len(sel_units)} units")
         
-        for shift in shifts:
-            first_trial_index = neg + shift
-            last_trial_index = len(trials) - pos + shift
-            logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
-            assert first_trial_index >= 0, f"{first_trial_index=}"
-            assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
-            assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
-            data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_units)]
+        for shift in (*shifts, None): # None will be a special case using all trials, with no shift
+            
+            is_all_trials = shift is None
+            if not is_all_trials:
+                labels = context_labels[max_neg_shift: -max_pos_shift]
+                first_trial_index = max_neg_shift + shift
+                last_trial_index = len(trials) - max_pos_shift + shift
+                logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
+                assert first_trial_index >= 0, f"{first_trial_index=}"
+                assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
+                assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
+                data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_units)]
+            else:
+                labels = context_labels
+                data = spike_counts_array[:, sorted(sel_units)]
+
             assert data.shape == (len(labels), len(sel_units)), f"{data.shape=}, {len(labels)=}, {len(sel_units)=}"
-            logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
+            logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels")
             
             _result = decoder_helper(
                 data,
@@ -324,8 +334,12 @@ def wrap_decoder_helper(
             result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
             result['shift_idx'] = shift
             result['repeat_idx'] = repeat_idx
-            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+            if shift in (0, None):  # don't save probabilities from shifts which we won't use 
+                result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+            else:
+                result['predict_proba'] = None 
             result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_units)].tolist()
+            result['is_all_trials'] = is_all_trials
             results.append(result)
             if params.test:
                 break
@@ -339,7 +353,6 @@ def wrap_decoder_helper(
                 pl.lit(structure).alias('structure'),
                 pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
                 pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
-                pl.lit(n_units).alias('n_units').cast(pl.UInt16),
                 pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
             )
             .cast(
