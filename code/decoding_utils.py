@@ -111,7 +111,7 @@ def decode_context_with_linear_shift(
         existing = (
             pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/')
             .filter(
-                pl.col('min_n_units').is_null() if params.min_n_units is None else pl.col('min_n_units').eq(params.min_n_units),
+                pl.col('unit_subsample_size').is_null() if params.unit_subsample_size is None else pl.col('unit_subsample_size').eq(params.unit_subsample_size),
                 pl.col('unit_criteria') == params.unit_criteria,
             )
             .select(params.units_group_by)
@@ -276,7 +276,7 @@ def wrap_decoder_helper(
     shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
-    n_units_to_use = params.min_n_units or len(unit_ids) # if min_n_units is None, use all available
+    n_units_to_use = params.unit_subsample_size or len(unit_ids) # if unit_subsample_size is None, use all available
     
     unit_idx = list(range(0, len(unit_ids)))
 
@@ -342,7 +342,7 @@ def wrap_decoder_helper(
                 pl.lit(session_id).alias('session_id'),
                 pl.lit(structure).alias('structure'),
                 pl.lit(sorted(electrode_group_names)).alias('electrode_group_names'),
-                pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
+                pl.lit(params.unit_subsample_size).alias('unit_subsample_size').cast(pl.UInt8),
                 pl.lit(params.unit_criteria).alias('unit_criteria'),
             )
             .cast(

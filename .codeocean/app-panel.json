@@ -42,12 +42,12 @@
 			"param_name": "unit_criteria",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "no_drift"
+			"default_value": "loose_drift"
 		},
 		{
 			"id": "TodaD5cDUuK1OCzO",
-			"name": "min_n_units",
-			"param_name": "min_n_units",
+			"name": "unit_subsample_size",
+			"param_name": "unit_subsample_size",
 			"type": "text",
 			"value_type": "integer"
 		},

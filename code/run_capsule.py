@@ -72,11 +72,13 @@ class Params(pydantic_settings.BaseSettings):
 
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    unit_criteria: str = pydantic.Field("medium", exclude=True, repr=True) # often varied, stored in data not params file
-    min_n_units: int | None = pydantic.Field(None, exclude=True, repr=True) # n_units is often varied, so will be stored with data, not in the params file
+    unit_criteria: str = pydantic.Field("loose_drift", exclude=True, repr=True) # often varied, stored in data not params file
+    unit_subsample_size: int | None = pydantic.Field(None, exclude=True, repr=True) # often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
+    min_n_units: int = 5 
+    """only process areas with at least this many units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
     spikes_time_before: float = 0.2
     crossval: Literal['5_fold', 'blockwise'] = '5_fold'
@@ -104,10 +106,11 @@ class Params(pydantic_settings.BaseSettings):
 
     @property
     def min_n_units_query(self) -> Expr:
-        if self.min_n_units is None:
-            return pl.lit(True)
+        if self.units_subsample_size is None:
+            min_ = self.min_n_units
         else:
-            return pl.col('unit_id').n_unique().over(self.units_group_by).ge(self.min_n_units)
+            min_ = self.min_n_units + self.units_subsample_size
+        return pl.col('unit_id').n_unique().over(self.units_group_by).ge(min_)
 
     @property
     def units_query(self) -> Expr:
@@ -116,7 +119,7 @@ class Params(pydantic_settings.BaseSettings):
     @pydantic.computed_field(repr=False)
     @property
     def unit_criteria_queries(self) -> dict[str, Expr]:
-        drift_base = (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1)
+        drift_base = (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1) & (pl.col('presence_ratio') >= 0.7)
         return {
             'medium': (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1),
             
@@ -134,6 +137,10 @@ class Params(pydantic_settings.BaseSettings):
             
             'strict_drift': drift_base & (pl.col('activity_drift') <= 0.1),
         }
+    
+    @pydantic.computed_field(repr=False)
+    def datacube_version(self) -> str:
+        return utils.get_datacube_dir().name.split('_')[-1]
         
     # set the priority of the sources:
     @classmethod
