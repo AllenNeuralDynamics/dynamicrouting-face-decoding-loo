@@ -8,9 +8,11 @@ os.environ['RAYON_NUM_THREADS'] = '1'
 
 import concurrent.futures as cf
 import contextlib
+import itertools
 import logging
 import math
 import multiprocessing
+import random
 import uuid
 from typing import Iterable, Sequence
 
@@ -131,7 +133,7 @@ def decode_context_with_linear_shift(
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
-        lock = None # multiprocessing.Lock()
+        lock = None # multiprocessing.Manager().Lock() # or None
         with cf.ProcessPoolExecutor(max_workers=params.max_workers, mp_context=multiprocessing.get_context('spawn')) as executor:
             for row in combinations_df.iter_rows(named=True):
                 if params.skip_existing and is_row_in_existing(row):
@@ -167,9 +169,9 @@ def decode_context_with_linear_shift(
                 continue
             try:
                 wrap_decoder_helper(
-                        params=params,
-                        **row,
-                    )
+                    params=params,
+                    **row,
+                )
             except NotEnoughBlocksError as exc:
                 logger.warning(f'{row["session_id"]} | {exc!r}')
             except Exception:
@@ -189,7 +191,7 @@ def wrap_decoder_helper(
     spike_counts_df = (
         utils.get_per_trial_spike_times(
             intervals={
-                'n_spikes_baseline': (pl.col('stim_start_time') - 0.2, pl.col('stim_start_time')),
+                'n_spikes_baseline': (pl.col('stim_start_time') - params.spikes_time_before, pl.col('stim_start_time')),
             },
             as_counts=True,
             unit_ids=(
@@ -274,29 +276,16 @@ def wrap_decoder_helper(
     shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
     logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
     
-    n_units = params.min_n_units or len(unit_ids)
+    n_units_to_use = params.min_n_units or len(unit_ids) # if min_n_units is None, use all available
     
+    unit_idx = list(range(0, len(unit_ids)))
+
     results = []
-    # if we specify n_units == 20 and have 20 units, there are no repeats to do - 
-    # get the min number of repeats possible to avoid unnecessary work:
-    IGNORE_MIN_REPEATS = True
-    n_possible_samples = math.comb(len(unit_ids), n_units)
-    if not IGNORE_MIN_REPEATS and params.n_repeats > n_possible_samples:
-        n_repeats = n_possible_samples
-        logger.warning(f"Reducing number of repeats from {params.n_repeats} to {n_repeats} to avoid unnecessary work ({params.min_n_units=}, {len(unit_ids)=}) {session_id}, {structure}, {electrode_group_names}")
-    else:
-        n_repeats = params.n_repeats
-    unit_samples: list[set[int]] = []
-    for repeat_idx in tqdm.tqdm(range(n_repeats), total=n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
+    for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
         
-        # ensure we don't sample the same set of units twice when we have few units:
-        while True:
-            sel_units = set(np.random.choice(np.arange(0, len(unit_ids)), n_units, replace=False))
-            if sel_units not in unit_samples:
-                unit_samples.append(sel_units)
-                break
+        sel_unit_idx = random.sample(unit_idx, n_units_to_use)
             
-        logger.debug(f"Repeat {repeat_idx}: selected {len(sel_units)} units")
+        logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
         
         for shift in (*shifts, None): # None will be a special case using all trials, with no shift
             
@@ -309,12 +298,12 @@ def wrap_decoder_helper(
                 assert first_trial_index >= 0, f"{first_trial_index=}"
                 assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
                 assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
-                data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_units)]
+                data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_unit_idx)]
             else:
                 labels = context_labels
-                data = spike_counts_array[:, sorted(sel_units)]
+                data = spike_counts_array[:, sorted(sel_unit_idx)]
 
-            assert data.shape == (len(labels), len(sel_units)), f"{data.shape=}, {len(labels)=}, {len(sel_units)=}"
+            assert data.shape == (len(labels), len(sel_unit_idx)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
             logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels")
             
             _result = decoder_helper(
@@ -338,7 +327,7 @@ def wrap_decoder_helper(
                 result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
             else:
                 result['predict_proba'] = None 
-            result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_units)].tolist()
+            result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_unit_idx)].tolist()
             result['is_all_trials'] = is_all_trials
             results.append(result)
             if params.test:
@@ -346,14 +335,15 @@ def wrap_decoder_helper(
         if params.test:
             break
     with lock or contextlib.nullcontext():
+        logger.info('Writing data')
         (
             pl.DataFrame(results)
             .with_columns(
                 pl.lit(session_id).alias('session_id'),
                 pl.lit(structure).alias('structure'),
-                pl.lit(list(electrode_group_names)).alias('electrode_group_names'),
+                pl.lit(sorted(electrode_group_names)).alias('electrode_group_names'),
                 pl.lit(params.min_n_units).alias('min_n_units').cast(pl.UInt8),
-                pl.lit(params.unit_criteria).alias('unit_criteria').cast(pl.Categorical),
+                pl.lit(params.unit_criteria).alias('unit_criteria'),
             )
             .cast(
                 {

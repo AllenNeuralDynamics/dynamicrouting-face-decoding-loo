@@ -72,15 +72,13 @@ class Params(pydantic_settings.BaseSettings):
 
     # Decoding parameters ----------------------------------------------- #
     session_table_query: str = "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    unit_criteria: str = pydantic.Field("medium", exclude=True, repr=True) # often varied, stoed in data not params file
+    unit_criteria: str = pydantic.Field("medium", exclude=True, repr=True) # often varied, stored in data not params file
     min_n_units: int | None = pydantic.Field(None, exclude=True, repr=True) # n_units is often varied, so will be stored with data, not in the params file
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
-    spikes_binsize: float = 0.2
     spikes_time_before: float = 0.2
-    spikes_time_after: float = 0.01
     crossval: Literal['5_fold', 'blockwise'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
