@@ -106,10 +106,10 @@ class Params(pydantic_settings.BaseSettings):
 
     @property
     def min_n_units_query(self) -> Expr:
-        if self.units_subsample_size is None:
+        if self.unit_subsample_size is None:
             min_ = self.min_n_units
         else:
-            min_ = self.min_n_units + self.units_subsample_size
+            min_ = self.min_n_units + self.unit_subsample_size
         return pl.col('unit_id').n_unique().over(self.units_group_by).ge(min_)
 
     @property
