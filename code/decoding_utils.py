@@ -331,13 +331,13 @@ def wrap_decoder_helper(
 ) -> None:
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     for interval_config in params.spike_count_interval_configs:
-        for interval in interval_config.intervals:
+        for start, stop in interval_config.intervals:
             spike_counts_df = (
                 utils.get_per_trial_spike_times(
                     intervals={
                         'n_spikes_baseline': (
-                            pl.col(interval_config.event_column_name) + interval[0], 
-                            pl.col(interval_config.event_column_name) + interval[1],
+                            pl.col(interval_config.event_column_name) + start, 
+                            pl.col(interval_config.event_column_name) + stop,
                         ),
                     },
                     as_counts=True,
@@ -470,7 +470,7 @@ def wrap_decoder_helper(
                     result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
                     result['time_aligned_to'] = interval_config.event_column_name
                     result['bin_size'] = interval_config.bin_size
-                    result['bin_center'] = (interval[0] + interval[1]) / 2
+                    result['bin_center'] = (start + stop) / 2
                     result['shift_idx'] = shift
                     result['repeat_idx'] = repeat_idx
                     if shift in (0, None):  # don't save probabilities from shifts which we won't use 
