@@ -514,13 +514,13 @@ def wrap_decoder_helper(
                 pl.lit(session_id).alias('session_id'),
                 pl.lit(structure).alias('structure'),
                 pl.lit(sorted(electrode_group_names)).alias('electrode_group_names'),
-                pl.lit(params.unit_subsample_size).alias('unit_subsample_size').cast(pl.UInt8),
+                pl.lit(params.unit_subsample_size).alias('unit_subsample_size').cast(pl.UInt16),
                 pl.lit(params.unit_criteria).alias('unit_criteria'),
             )
             .cast(
                 {
-                    'shift_idx': pl.Int8,
-                    'repeat_idx': pl.UInt8,
+                    'shift_idx': pl.Int16,
+                    'repeat_idx': pl.UInt16,
                     'time_aligned_to': pl.Enum([c.event_column_name for c in params.spike_count_interval_configs]),
                 }
             )
