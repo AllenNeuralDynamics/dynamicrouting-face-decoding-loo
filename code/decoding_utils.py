@@ -124,7 +124,7 @@ class Params(pydantic_settings.BaseSettings):
     @property
     def units_query(self) -> Expr:
         return self.unit_criteria_queries[self.unit_criteria]
-
+        
     @pydantic.computed_field(repr=False)
     @property
     def unit_criteria_queries(self) -> dict[str, Expr]:
@@ -303,7 +303,7 @@ def decode_context_with_linear_shift(
                         except Exception:
                             logger.exception(f'{session_id} | Failed:')
                     logger.info(f'{session_id} | Completed')
-                    
+
     else: # single-process mode
         for row in tqdm.tqdm(combinations_df.iter_rows(named=True), total=len(combinations_df), unit='row', desc=f'decoding'):
             if params.skip_existing and is_row_in_existing(row):
@@ -330,6 +330,7 @@ def wrap_decoder_helper(
     lock = None,
 ) -> None:
     logger.debug(f"Getting units and trials for {session_id} {structure}")
+    results = []
     for interval_config in params.spike_count_interval_configs:
         for start, stop in interval_config.intervals:
             spike_counts_df = (
@@ -427,7 +428,6 @@ def wrap_decoder_helper(
             
             unit_idx = list(range(0, len(unit_ids)))
 
-            results = []
             for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
                 
                 sel_unit_idx = random.sample(unit_idx, n_units_to_use)
@@ -506,6 +506,7 @@ def wrap_decoder_helper(
                 {
                     'shift_idx': pl.Int8,
                     'repeat_idx': pl.UInt8,
+                    'time_aligned_to': pl.Enum([interval_config.event_column_name for params.spike_count_interval_configs]),
                 }
             )
             .write_parquet(
