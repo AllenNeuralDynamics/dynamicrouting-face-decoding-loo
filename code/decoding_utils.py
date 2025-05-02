@@ -43,7 +43,7 @@ class BinnedRelativeIntervalConfig(pydantic.BaseModel):
 
     @property
     def intervals(self) -> list[tuple[float, float]]:
-        start_times = np.arange(self.start_time, self.stop_time + self.bin_size, self.bin_size)
+        start_times = np.arange(self.start_time, self.stop_time, self.bin_size)
         stop_times = start_times + self.bin_size
         return list(zip(start_times, stop_times))
     
@@ -92,7 +92,7 @@ class Params(pydantic_settings.BaseSettings):
     """ set solver for the decoder. Setting to None reverts to default """
     units_group_by: list[str] = ['session_id', 'structure', 'electrode_group_names']
     
-    spike_count_intervals: str = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response'] = 'pre_stim_single_bin'
 
     @property
     def data_path(self) -> upath.UPath:
@@ -347,7 +347,9 @@ def wrap_decoder_helper(
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     results = []
     for interval_config in params.spike_count_interval_configs:
+        print(f'{interval_config.intervals=}')
         for start, stop in interval_config.intervals:
+            print(f'{start=}, {stop=}')
             spike_counts_df = (
                 utils.get_per_trial_spike_times(
                     intervals={
