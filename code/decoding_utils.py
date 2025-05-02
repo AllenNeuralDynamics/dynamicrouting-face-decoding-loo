@@ -92,17 +92,8 @@ class Params(pydantic_settings.BaseSettings):
     """ set solver for the decoder. Setting to None reverts to default """
     units_group_by: list[str] = ['session_id', 'structure', 'electrode_group_names']
     
-    spike_count_interval_configs: list[BinnedRelativeIntervalConfig] = pydantic.Field(
-        default_factory=lambda: [
-            BinnedRelativeIntervalConfig(
-                event_column_name='stim_start_time',
-                start_time=-0.2,
-                stop_time=0,
-                bin_size=0.2,
-            ),
-        ]
-    )
-    
+    spike_count_intervals: str = 'pre_stim_single_bin'
+
     @property
     def data_path(self) -> upath.UPath:
         """Path to delta lake on S3"""
@@ -121,13 +112,9 @@ class Params(pydantic_settings.BaseSettings):
             min_ = self.min_n_units + self.unit_subsample_size
         return pl.col('unit_id').n_unique().over(self.units_group_by).ge(min_)
 
-    @property
-    def units_query(self) -> Expr:
-        return self.unit_criteria_queries[self.unit_criteria]
-        
     @pydantic.computed_field(repr=False)
     @property
-    def unit_criteria_queries(self) -> dict[str, Expr]:
+    def units_query(self) -> Expr:
         drift_base = (pl.col('decoder_label') != "noise") & (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('amplitude_cutoff') <= 0.1) & (pl.col('presence_ratio') >= 0.7)
         return {
             'medium': (pl.col('isi_violations_ratio') <= 0.5) & (pl.col('presence_ratio') >= 0.9) & (pl.col('amplitude_cutoff') <= 0.1),
@@ -145,8 +132,36 @@ class Params(pydantic_settings.BaseSettings):
             'medium_drift': drift_base & (pl.col('activity_drift') <= 0.15),
             
             'strict_drift': drift_base & (pl.col('activity_drift') <= 0.1),
-        }
+        }[self.unit_criteria]
     
+    @pydantic.computed_field(repr=False)
+    @property
+    def spike_count_interval_configs(self) -> list[BinnedRelativeIntervalConfig]:
+        return {
+            'pre_stim_single_bin': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.2,
+                    stop_time=0,
+                    bin_size=0.2,
+                ),
+            ],
+            'binned_stim_and_response': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.4,
+                    stop_time=2.0,
+                    bin_size=0.2,
+                ),
+                BinnedRelativeIntervalConfig(
+                    event_column_name='response_time',
+                    start_time=-0.4,
+                    stop_time=2.0,
+                    bin_size=0.2,
+                ),
+            ]
+        }[self.spike_count_intervals]
+
     @pydantic.computed_field(repr=False)
     def datacube_version(self) -> str:
         return utils.get_datacube_dir().name.split('_')[-1]

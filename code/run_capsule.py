@@ -46,25 +46,10 @@ def main():
     utils.setup_logging()
     params = Params() # reads from CLI args
     logger.setLevel(params.logging_level)
-    
-    # if params.override_params_json:
-    logger.warning(f"Overriding parameters with spike count interval configs for testing")
-    params = Params(
-        spike_count_interval_configs=[
-            BinnedRelativeIntervalConfig(
-                event_column_name='stim_start_time',
-                start_time=-0.4,
-                stop_time=2.0,
-                bin_size=0.2,
-            ),
-            BinnedRelativeIntervalConfig(
-                event_column_name='response_time',
-                start_time=-0.4,
-                stop_time=2.0,
-                bin_size=0.2,
-            ),
-        ]
-    )
+  
+    if params.override_params_json:
+        logger.info(f"Overriding parameters with {params.override_params_json}")
+        params = Params(**json.loads(params.override_params_json))
         
     if params.test:
         params = Params(
