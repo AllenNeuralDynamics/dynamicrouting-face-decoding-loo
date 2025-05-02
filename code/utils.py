@@ -382,13 +382,21 @@ def get_per_trial_spike_times(
         trials_df
         .filter(pl.col('session_id').is_in(units_df['session_id'].unique()))
     )
-    # temp add columns for each interval with type list[float] (start, end)
+
+    # add temp columns for each interval with type list[float] (start, end)
     temp_col_prefix = "__temp_interval"
+    def _temp_col_name(col_name: str) -> str:
+        """Internal temporary column name"""
+        return f"{temp_col_prefix}_{col_name}"
     for col_name, (start, end) in intervals.items():
         trials_df = (
             trials_df
             .with_columns(
-                pl.concat_list(start, end).alias(f"{temp_col_prefix}_{col_name}"),
+                pl.concat_list(start, end).alias(_temp_col_name(col_name)),
+            )
+            # if start or stop contain nulls the searchsorted below will fail: remove these rows (which don't correspond to data anyway)
+            .filter(
+                pl.col(_temp_col_name(col_name)).list.drop_nulls().list.len() == 2,
             )
         )
     if isinstance(trials_frame, pl.LazyFrame):
@@ -406,7 +414,7 @@ def get_per_trial_spike_times(
     
     for (session_id, *_), session_trials in trials_df.group_by(pl.col('session_id')):
         session_units = units_df.filter(pl.col('session_id') == session_id).unique('unit_id')
-        # unit_ids should already be unique, but make sure so we don't want to do unnecessary work
+        # unit_ids should already be unique, but make sure so we don't do unnecessary work
         results['trial_index'].extend(session_trials['trial_index'].to_list() * len(session_units))
         for row in session_units.iter_rows(named=True):
             if row['unit_id'] is None:
@@ -417,7 +425,7 @@ def get_per_trial_spike_times(
                 # get spike times with start:end interval for each row of the trials table
                 spike_times = spike_times_all_units[row['unit_id']]
                 spikes_in_intervals: list[list[float]] | list[float] = []
-                for a, b in np.searchsorted(spike_times, session_trials[f"{temp_col_prefix}_{col_name}"].to_list()):
+                for a, b in np.searchsorted(spike_times, session_trials[_temp_col_name(col_name)].to_list()):
                     spike_times_in_interval = spike_times[a:b]
                     #! spikes coincident with end of interval are not included
                     if as_counts:
