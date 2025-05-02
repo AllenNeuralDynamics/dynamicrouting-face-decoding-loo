@@ -128,6 +128,14 @@
 			"param_name": "n_jobs",
 			"type": "text",
 			"value_type": "integer"
+		},
+		{
+			"id": "HfnBe3exbfyVCqyC",
+			"name": "spike_count_intervals",
+			"param_name": "spike_count_intervals",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "pre_stim_single_bin"
 		}
 	]
 }
