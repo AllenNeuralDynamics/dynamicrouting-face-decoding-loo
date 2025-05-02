@@ -521,7 +521,7 @@ def wrap_decoder_helper(
                 {
                     'shift_idx': pl.Int8,
                     'repeat_idx': pl.UInt8,
-                    'time_aligned_to': pl.Enum([interval_config.event_column_name for params.spike_count_interval_configs]),
+                    'time_aligned_to': pl.Enum([c.event_column_name for c in params.spike_count_interval_configs]),
                 }
             )
             .write_parquet(
