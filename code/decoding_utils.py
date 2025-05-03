@@ -347,9 +347,7 @@ def wrap_decoder_helper(
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     results = []
     for interval_config in params.spike_count_interval_configs:
-        print(f'{interval_config.intervals=}')
         for start, stop in interval_config.intervals:
-            print(f'{start=}, {stop=}')
             spike_counts_df = (
                 utils.get_per_trial_spike_times(
                     intervals={
