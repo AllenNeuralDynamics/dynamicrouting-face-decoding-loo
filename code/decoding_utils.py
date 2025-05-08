@@ -484,6 +484,7 @@ def wrap_decoder_helper(
                     )
                     result = {}
                     result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
+                    result['balanced_accuracy_train'] = _result['balanced_accuracy_train'].item()
                     result['time_aligned_to'] = interval_config.event_column_name
                     result['bin_size'] = interval_config.bin_size
                     result['bin_center'] = (start + stop) / 2
@@ -505,6 +506,7 @@ def wrap_decoder_helper(
                         result['trial_indices'] = None 
                         
                     result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_unit_idx)].tolist()
+                    result['coefs'] = _result['balanced_accuracy_test'][sorted(sel_unit_idx)].tolist()
                     result['is_all_trials'] = is_all_trials
                     results.append(result)
                     if params.test:
@@ -536,6 +538,7 @@ def wrap_decoder_helper(
                     'time_aligned_to': pl.Enum([c.event_column_name for c in params.spike_count_interval_configs]),
                     'trial_indices': pl.List(pl.UInt16),
                     'predict_proba': pl.List(pl.Float64),
+                    'coefs': pl.List(pl.Float64),
                 }
             )
             .write_parquet(
