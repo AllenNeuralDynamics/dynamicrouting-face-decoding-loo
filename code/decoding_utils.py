@@ -427,12 +427,13 @@ def wrap_decoder_helper(
                         .otherwise(pl.lit('aud'))
                         .alias('context_name')
                     )
+                    .sort('trial_index')
                 )
             if trials.n_unique('block_index') != 6:
                 raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
             logger.debug(f"Got {len(trials)} trials")
 
-            context_labels = trials.sort('trial_index')['context_name'].to_numpy().squeeze()
+            context_labels = trials['context_name'].to_numpy().squeeze()
 
             max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
             max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -488,10 +489,21 @@ def wrap_decoder_helper(
                     result['bin_center'] = (start + stop) / 2
                     result['shift_idx'] = shift
                     result['repeat_idx'] = repeat_idx
-                    if shift in (0, None):  # don't save probabilities from shifts which we won't use 
+                    
+                    if shift in (0, None):  
                         result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                     else:
+                        # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
+                        
+                    if is_all_trials:
+                        result['trial_indices'] = trials['trial_index'].to_list()
+                    elif shift in (0, None):
+                        result['trial_indices'] = trials['trial_index'].to_list()[first_trial_index: last_trial_index]
+                    else:
+                        # don't save trial indices for all shifts
+                        result['trial_indices'] = None 
+                        
                     result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_unit_idx)].tolist()
                     result['is_all_trials'] = is_all_trials
                     results.append(result)
@@ -522,6 +534,8 @@ def wrap_decoder_helper(
                     'shift_idx': pl.Int16,
                     'repeat_idx': pl.UInt16,
                     'time_aligned_to': pl.Enum([c.event_column_name for c in params.spike_count_interval_configs]),
+                    'trial_indices': pl.List(pl.UInt16),
+                    'predict_proba': pl.List(pl.Float64),
                 }
             )
             .write_parquet(
