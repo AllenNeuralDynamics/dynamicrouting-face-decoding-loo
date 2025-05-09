@@ -378,6 +378,8 @@ def get_per_trial_spike_times(
     
     if isinstance(trials_frame, str):
         trials_df = get_df(trials_frame)
+    else:
+        trials_df = trials_frame
     trials_df = (
         trials_df
         .filter(pl.col('session_id').is_in(units_df['session_id'].unique()))

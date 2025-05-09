@@ -6,3 +6,8 @@ credentials:
   access_key_id: AWS_ACCESS_KEY_ID
   secret_access_key: AWS_SECRET_ACCESS_KEY
   region: AWS_DEFAULT_REGION
+- type: api-key
+  id: pjI6K6xSN7Jyi19b
+  description: Codeocean read/write
+  key: API_KEY
+  secret: API_SECRET

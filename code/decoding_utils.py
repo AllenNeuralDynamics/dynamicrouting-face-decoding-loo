@@ -91,7 +91,10 @@ class Params(pydantic_settings.BaseSettings):
     solver: str | None = None
     """ set solver for the decoder. Setting to None reverts to default """
     units_group_by: list[str] = ['session_id', 'structure', 'electrode_group_names']
-    
+
+    trials_filter: str | Expr = pydantic.Field(default_factory = lambda:pl.lit(True))
+    """ filter trials table input to decoder by boolean column or polars expression"""
+
     spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response'] = 'pre_stim_single_bin'
 
     @property
@@ -346,6 +349,16 @@ def wrap_decoder_helper(
 ) -> None:
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     results = []
+    all_trials = (
+        utils.get_df('trials', lazy=True)
+        .filter(
+            pl.col('session_id') == session_id,
+            params.trials_filter,
+            # obs_intervals may affect number of trials available
+        )
+        .sort('trial_index')
+        .collect()
+    )
     for interval_config in params.spike_count_interval_configs:
         for start, stop in interval_config.intervals:
             spike_counts_df = (
@@ -356,6 +369,7 @@ def wrap_decoder_helper(
                             pl.col(interval_config.event_column_name) + stop,
                         ),
                     },
+                    trials_frame=all_trials,
                     as_counts=True,
                     unit_ids=(
                         utils.get_df('units', lazy=True)
@@ -394,7 +408,7 @@ def wrap_decoder_helper(
             
             unit_ids = spike_counts_df['unit_id'].unique()
             trials = (
-                utils.get_df('trials', lazy=True)
+                all_trials
                 .filter(
                     pl.col('session_id') == session_id,
                     pl.col('trial_index').is_in(spike_counts_df['trial_index'].unique()),
@@ -402,7 +416,6 @@ def wrap_decoder_helper(
                 )
                 .sort('trial_index')
                 .select('context_name', 'start_time', 'trial_index', 'block_index', 'session_id')
-                .collect()
             )
             if (
                 trials['block_index'].n_unique() == 1
@@ -506,7 +519,7 @@ def wrap_decoder_helper(
                         result['trial_indices'] = None 
                         
                     result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_unit_idx)].tolist()
-                    result['coefs'] = _result['balanced_accuracy_test'][sorted(sel_unit_idx)].tolist()
+                    result['coefs'] = _result['coefs'][0].tolist()
                     result['is_all_trials'] = is_all_trials
                     results.append(result)
                     if params.test:
