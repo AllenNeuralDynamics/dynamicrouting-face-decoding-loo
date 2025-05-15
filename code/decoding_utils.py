@@ -95,7 +95,7 @@ class Params(pydantic_settings.BaseSettings):
     trials_filter: str | Expr = pydantic.Field(default_factory = lambda:pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
 
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5'] = 'pre_stim_single_bin'
 
     @property
     def data_path(self) -> upath.UPath:
@@ -147,6 +147,22 @@ class Params(pydantic_settings.BaseSettings):
                     start_time=-0.2,
                     stop_time=0,
                     bin_size=0.2,
+                ),
+            ],
+            'pre_stim_single_bin_0.5': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.5,
+                    stop_time=0,
+                    bin_size=0.5,
+                ),
+            ],
+            'pre_stim_single_bin_1.5': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-1.5,
+                    stop_time=0,
+                    bin_size=1.5,
                 ),
             ],
             'binned_stim_and_response': [
