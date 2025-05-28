@@ -554,7 +554,8 @@ def wrap_decoder_helper(
                         penalty=params.penalty,
                         solver=params.solver,
                         n_jobs=None,
-                    )
+                    )                  
+
                     result = {}
                     result["balanced_accuracy_test"] = _result[
                         "balanced_accuracy_test"
