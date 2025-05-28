@@ -284,9 +284,6 @@ def decode_context_with_linear_shift(
                 logger.debug(
                     f"Submitted decoding to process pool for session {row['session_id']}, {row['model_label']}"
                 )
-            if params.test:
-                logger.info("Test mode: exiting after first session")
-                break
             for future in tqdm.tqdm(
                 cf.as_completed(future_to_session),
                 total=len(future_to_session),
