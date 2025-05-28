@@ -54,9 +54,6 @@ def main():
     if params.test:
         params = Params(
             result_prefix=f"test/{params.result_prefix}",
-            min_n_units=20,
-            n_repeats=1,
-            trials_filter="is_vis_target",
         )
         logger.info("Test mode: using modified set of parameters")
         

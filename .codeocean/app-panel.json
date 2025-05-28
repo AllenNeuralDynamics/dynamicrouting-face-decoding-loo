@@ -37,21 +37,6 @@
 			"default_value": "INFO"
 		},
 		{
-			"id": "u68UC9mfe9wxpOzc",
-			"name": "unit_criteria",
-			"param_name": "unit_criteria",
-			"type": "text",
-			"value_type": "string",
-			"default_value": "loose_drift"
-		},
-		{
-			"id": "TodaD5cDUuK1OCzO",
-			"name": "unit_subsample_size",
-			"param_name": "unit_subsample_size",
-			"type": "text",
-			"value_type": "integer"
-		},
-		{
 			"id": "CLnGBLMVID8fEr6c",
 			"name": "session_table_query",
 			"param_name": "session_table_query",
@@ -68,15 +53,6 @@
 			"type": "text",
 			"value_type": "string",
 			"default_value": "{}"
-		},
-		{
-			"id": "9zeS6i4cLxdwWiVC",
-			"name": "skip_existing",
-			"param_name": "skip_existing",
-			"type": "text",
-			"value_type": "integer",
-			"default_value": "1",
-			"maximum": 1
 		},
 		{
 			"id": "CKVquiTjW2bADhJk",
@@ -131,11 +107,11 @@
 		},
 		{
 			"id": "HfnBe3exbfyVCqyC",
-			"name": "spike_count_intervals",
-			"param_name": "spike_count_intervals",
+			"name": "feature_intervals",
+			"param_name": "feature_intervals",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "pre_stim_single_bin"
+			"default_value": "quiescent_stim_start_response"
 		}
 	]
 }

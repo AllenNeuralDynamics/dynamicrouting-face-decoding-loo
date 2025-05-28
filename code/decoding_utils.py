@@ -99,6 +99,8 @@ feature_config_map: dict[str, FeatureConfig] = {
 
 
 class Params(pydantic_settings.BaseSettings):
+    model_config  = pydantic.ConfigDict(protected_namespaces=()) # allow fields that start with `model_`
+
     # ----------------------------------------------------------------------------------
     # Required parameters
     result_prefix: str
@@ -161,7 +163,7 @@ class Params(pydantic_settings.BaseSettings):
     def data_path(self) -> upath.UPath:
         """Path to delta lake on S3"""
         return (
-            upath.UPath("s3://aind-scratch-data/dynamic-routing/decoding/results")
+            upath.UPath("s3://aind-scratch-data/dynamic-routing/face-decoding/results")
             / f"{'_'.join([self.result_prefix, self.run_id])}"
         )
 

@@ -38,7 +38,7 @@
 				},
 				{
 					"name": "git+https://github.com/AllenInstitute/dynamic_routing_analysis#egg=dynamic-routing-analysis",
-					"version": "5f8121f48fa05deaf8acfa5964e2f8e39703d1e3"
+					"version": "76794ab3e14ff87de13e204dd314449bac623eb2"
 				},
 				{
 					"name": "hdmf",
@@ -83,29 +83,6 @@
 			],
 			"options": {},
 			"pre_install_options": {}
-		},
-		"vscode": {
-			"packages": [
-				{
-					"name": "REditorSupport.R"
-				},
-				{
-					"name": "continue.continue"
-				},
-				{
-					"name": "ms-python.python"
-				},
-				{
-					"name": "ms-toolsai.jupyter"
-				},
-				{
-					"name": "reageyao.bioSyntax"
-				},
-				{
-					"name": "saoudrizwan.claude-dev"
-				}
-			],
-			"version": "4.95.3"
 		}
 	},
 	"env_variables": [
