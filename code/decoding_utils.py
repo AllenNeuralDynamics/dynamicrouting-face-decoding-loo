@@ -319,9 +319,6 @@ def decode_context_with_linear_shift(
                 logger.warning(f'{row["session_id"]} | {exc!r}')
             except Exception:
                 logger.exception(f'{row["session_id"]} | Failed:')
-            if params.test:
-                logger.info("Test mode: exiting after first session")
-                break
 
 
 def wrap_decoder_helper(
