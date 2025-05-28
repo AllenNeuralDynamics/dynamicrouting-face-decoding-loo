@@ -382,9 +382,9 @@ def wrap_decoder_helper(
                 ]
             )
         df = lazynwb.scan_nwb(
-            utils.get_nwb_paths(session_id),
+            next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
             table_path=feature_config.table_path,
-        ).select(columns)
+        ).select(*columns, "timestamps")
 
         def part_info_LP_all_parts(df: pl.DataFrame | pl.LazyFrame, column_name: str):
             likelihood = pl.col(f"{column_name}_likelihood")
@@ -428,8 +428,8 @@ def wrap_decoder_helper(
 
     else:
         timeseries = lazynwb.get_timeseries(
-            utils.get_nwb_paths(session_id)[0],
-            search_term=model_label,
+            next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
+            search_term=feature_config.table_path,
             exact_path=True,
             match_all=False,
         )
