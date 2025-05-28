@@ -52,22 +52,49 @@ class BinnedRelativeIntervalConfig(pydantic.BaseModel):
         return list(zip(start_times, stop_times))
 
 
-input_data_type_mapping: dict[str, dict[str, list]] = {
-    "ear": {"table_path": "processing/behavior/lp_side_camera", "cols": ["ear_base_l"]},
-    "jaw": {"table_path": "processing/behavior/lp_side_camera", "cols": ["jaw"]},
-    "nose": {"table_path": "processing/behavior/lp_side_camera", "cols": ["nose_tip"]},
-    "whisker_pad": {
-        "table_path": "processing/behavior/lp_side_camera",
-        "cols": ["whisker_pad_l_side"],
-    },
-    "facial_features": {
-        "table_path": "processing/behavior/lp_side_camera",
-        "cols": ["ear_base_l", "whisker_pad_l_side", "jaw", "nose_tip"],
-    },
-    "facemap": {
-        "table_path": "processing/behavior/facemap_side_camera",
-        "cols": list(range(10)),
-    },
+class FeatureConfig(pydantic.BaseModel):
+    model_label: str
+    table_path: str
+    features: list[str | int]
+    """List of features to use for the model. Can be a list of strings (names of cols in DynamicTable) or
+    integers (for indexing into TimeSeries.data array)"""
+
+    @property
+    def is_table(self) -> bool:
+        return isinstance(self.features[0], int)
+
+
+feature_config_map: dict[str, FeatureConfig] = {
+    "ear": FeatureConfig(
+        model_label="ear",
+        table_path="processing/behavior/lp_side_camera",
+        features=["ear_base_l"],
+    ),
+    "jaw": FeatureConfig(
+        model_label="jaw",
+        table_path="processing/behavior/lp_side_camera",
+        features=["jaw"],
+    ),
+    "nose": FeatureConfig(
+        model_label="nose",
+        table_path="processing/behavior/lp_side_camera",
+        features=["nose_tip"],
+    ),
+    "whisker_pad": FeatureConfig(
+        model_label="whisker_pad",
+        table_path="processing/behavior/lp_side_camera",
+        features=["whisker_pad_l_side"],
+    ),
+    "facial_features": FeatureConfig(
+        model_label="facial_features",
+        table_path="processing/behavior/lp_side_camera",
+        features=["ear_base_l", "jaw", "nose_tip", "whisker_pad_l_side"],
+    ),
+    "facemap": FeatureConfig(
+        model_label="facemap",
+        table_path="processing/behavior/facemap_side_camera",
+        features=list(range(10)),
+    ),
 }
 
 
@@ -98,7 +125,7 @@ class Params(pydantic_settings.BaseSettings):
     session_table_query: str = (
         "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     )
-    input_data_types: list[str] = pydantic.Field(
+    d: list[str] = pydantic.Field(
         default_factory=lambda: [
             "facial_features",
             "ear",
@@ -108,6 +135,7 @@ class Params(pydantic_settings.BaseSettings):
             "facemap",
         ]
     )
+    n_repeats: int = 1
     crossval: Literal["5_fold", "blockwise"] = "5_fold"
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
@@ -215,16 +243,12 @@ def decode_context_with_linear_shift(
 
     combinations_df = pl.DataFrame(
         {
-            "session_id": list(session_ids) * len(params.input_data_types),
-            "input_data_type": [
-                [v] * len(session_ids) for v in params.input_data_types
-            ],
+            "session_id": list(session_ids) * len(params.d),
+            "model_label": [[v] * len(session_ids) for v in params.d],
         }
-    ).with_columns((pl.col("input_data_type") == "facemap").alias("is_feature_a_table"))
-
-    logger.info(
-        f"Processing {len(combinations_df)} unique session/area/probe combinations"
     )
+
+    logger.info(f"Processing {len(combinations_df)} unique session/model combinations")
     if params.use_process_pool:
         session_results: dict[str, list[cf.Future]] = {}
         future_to_session = {}
@@ -246,7 +270,7 @@ def decode_context_with_linear_shift(
                 session_results.setdefault(row["session_id"], []).append(future)
                 future_to_session[future] = row["session_id"]
                 logger.debug(
-                    f"Submitted decoding to process pool for session {row['session_id']}, structure {row['structure']}"
+                    f"Submitted decoding to process pool for session {row['session_id']}, {row['model_label']}"
                 )
                 if params.test:
                     logger.info("Test mode: exiting after first session")
@@ -254,7 +278,7 @@ def decode_context_with_linear_shift(
             for future in tqdm.tqdm(
                 cf.as_completed(future_to_session),
                 total=len(future_to_session),
-                unit="structure",
+                unit="model",
                 desc="Decoding",
             ):
                 session_id = future_to_session[future]
@@ -294,13 +318,13 @@ def decode_context_with_linear_shift(
 def wrap_decoder_helper(
     params: Params,
     session_id: str,
-    input_data_type: str,
-    is_feature_a_table: bool,
+    model_label: str,
     lock=None,
 ) -> None:
     logger.debug(f"Getting trials for {session_id}")
+    feature_config = feature_config_map[model_label]
     results = []
-    all_trials = (
+    trials = (
         utils.get_df("trials", lazy=True)
         .filter(
             pl.col("session_id") == session_id,
@@ -310,10 +334,43 @@ def wrap_decoder_helper(
         .sort("trial_index")
         .collect()
     )
-    
-    if is_feature_a_table:
+    if (
+        trials["block_index"].n_unique() == 1
+        and not (
+            utils.get_df("session").filter(
+                pl.col("session_id") == session_id,
+                pl.col("keywords").list.contains("templeton"),
+            )
+        ).is_empty()
+    ):
+        logger.info(f"Adding dummy context labels for Templeton session {session_id}")
+        trials = (
+            trials.with_columns(
+                pl.col("start_time")
+                .sub(pl.col("start_time").min().over("session_id"))
+                .truediv(10 * 60)
+                .floor()
+                .clip(0, 5)
+                .alias("block_index")
+                # short 7th block will sometimes be present: merge into 6th with clip
+            )
+            .with_columns(
+                pl.when(pl.col("block_index").mod(2).eq(random.choice([0, 1])))
+                .then(pl.lit("vis"))
+                .otherwise(pl.lit("aud"))
+                .alias("context_name")
+            )
+            .sort("trial_index")
+        )
+    if trials.n_unique("block_index") != 6:
+        raise NotEnoughBlocksError(
+            f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data'
+        )
+    logger.debug(f"Got {len(trials)} trials")
+
+    if feature_config.is_table:
         columns = []
-        for col in input_data_type_mapping[input_data_type]['cols']:
+        for col in feature_config.features:
             columns.extend(
                 [
                     f"{col}_x",
@@ -322,68 +379,75 @@ def wrap_decoder_helper(
                     f"{col}_likelihood",
                 ]
             )
-        df = (
-            lazynwb.scan_nwb(
-                utils.get_nwb_paths(session_id),
-                table_path=input_data_type_mapping[input_data_type]["table_path"],
-            )
-            .select(columns)
-        )
-        def part_info_LP_all_parts(df, column_name: str):
+        df = lazynwb.scan_nwb(
+            utils.get_nwb_paths(session_id),
+            table_path=feature_config.table_path,
+        ).select(columns)
+
+        def part_info_LP_all_parts(df: pl.DataFrame | pl.LazyFrame, column_name: str):
             likelihood = pl.col(f"{column_name}_likelihood")
             temporal_norm = pl.col(f"{column_name}_temporal_norm")
             x = pl.col(f"{column_name}_x")
             y = pl.col(f"{column_name}_y")
             return (
-                df.
-                with_columns(
-                    (np.sqrt(x ** 2 + y ** 2)).alias('_xy'),
-                )    
-                .with_columns(
-                    pl.when(
-                        (likelihood >= 0.98) & (temporal_norm <= temporal_norm.mean() + 3 * temporal_norm.std())
-                    ).then(pl.col('_xy')).otherwise(None)
+                df.with_columns(
+                    (np.sqrt(x**2 + y**2)).alias("_xy"),
                 )
                 .with_columns(
-                    pl.col("_xy").fill_nan(None).interpolate().backward_fill().forward_fill().alias(f"{column_name}_xy"),
-                )                                                                                                   
+                    pl.when(
+                        (likelihood >= 0.98)
+                        & (
+                            temporal_norm
+                            <= temporal_norm.mean() + 3 * temporal_norm.std()
+                        )
+                    )
+                    .then(pl.col("_xy"))
+                    .otherwise(None)
+                )
+                .with_columns(
+                    pl.col("_xy")
+                    .fill_nan(None)
+                    .interpolate()
+                    .backward_fill()
+                    .forward_fill()
+                    .alias(f"{column_name}_xy"),
+                )
             )
-        for col in input_data_type_mapping[input_data_type]['cols']:
+
+        for col in feature_config.features:
+            assert isinstance(
+                col, str
+            ), f"Expected string column name in feature config: {feature_config!r}"
             df = df.pipe(
                 part_info_LP_all_parts,
                 column_name=col,
             )
-        df = df.collect()
-        
+        df = df.collect()  # type: ignore[assignment]
+
     else:
-        timeseries = (
-            lazynwb.get_timeseries(
-                utils.get_nwb_paths(session_id)[0],
-                search_term=input_data_type,
-                exact_path=True,
-                match_all=False,
-            )
-        )   
-        
+        timeseries = lazynwb.get_timeseries(
+            utils.get_nwb_paths(session_id)[0],
+            search_term=model_label,
+            exact_path=True,
+            match_all=False,
+        )
+
     for interval_config in params.feature_interval_configs:
         for start, stop in interval_config.intervals:
             # filter df or timeseries to the interval
-            event_times = (
-                all_trials
-                .select(
-                    start=pl.col(interval_config.event_column_name) + start,
-                    stop=pl.col(interval_config.event_column_name) + stop,
-                )
+            event_times = trials.select(
+                start=pl.col(interval_config.event_column_name) + start,
+                stop=pl.col(interval_config.event_column_name) + stop,
             )
             feature_arrays = []
-            if is_feature_a_table:
+            if feature_config.is_table:
                 array = []
-                for col in input_data_type_mapping[input_data_type]['cols']:
+                for col in feature_config.features:
                     for a, b in zip(event_times["start"], event_times["stop"]):
                         array.append(
-                            df.filter(pl.col('timestamps').is_between(a, b, closed='left')).select(
-                                pl.col(f"{col}_xy").median()
-                            )
+                            df.filter(
+                                pl.col("timestamps").is_between(a, b, closed="left")
+                            ).select(pl.col(f"{col}_xy").median())[0]
                         )
                     feature_arrays.append(array)
             else:
@@ -391,63 +455,17 @@ def wrap_decoder_helper(
                     start_index = timeseries.timestamps.searchsorted(a, side="left")
                     stop_index = timeseries.timestamps.searchsorted(b, side="right")
                     feature_arrays.append(
-                        np.nanmedian(timeseries.data[start_index:stop_index, input_data_type_mapping[input_data_type]['cols']], axis=1)
+                        np.nanmedian(
+                            timeseries.data[
+                                start_index:stop_index,
+                                feature_config.features,
+                            ],
+                            axis=1,
+                        )
                     )
-            feature_arrays = np.array(feature_arrays)
-            
-            logger.debug(f"Got feature arrays: {feature_arrays.shape}")
-            trials = (
-                all_trials.filter(
-                    pl.col("session_id") == session_id,
-                    pl.col("trial_index").is_in(
-                        spike_counts_df["trial_index"].unique()
-                    ),
-                    # obs_intervals may affect number of trials available
-                )
-                .sort("trial_index")
-                .select(
-                    "context_name",
-                    "start_time",
-                    "trial_index",
-                    "block_index",
-                    "session_id",
-                )
-            )
-            if (
-                trials["block_index"].n_unique() == 1
-                and not (
-                    utils.get_df("session").filter(
-                        pl.col("session_id") == trials["session_id"][0],
-                        pl.col("keywords").list.contains("templeton"),
-                    )
-                ).is_empty()
-            ):
-                logger.info(
-                    f"Adding dummy context labels for Templeton session {session_id}"
-                )
-                trials = (
-                    trials.with_columns(
-                        pl.col("start_time")
-                        .sub(pl.col("start_time").min().over("session_id"))
-                        .truediv(10 * 60)
-                        .floor()
-                        .clip(0, 5)
-                        .alias("block_index")
-                        # short 7th block will sometimes be present: merge into 6th with clip
-                    )
-                    .with_columns(
-                        pl.when(pl.col("block_index").mod(2).eq(random.choice([0, 1])))
-                        .then(pl.lit("vis"))
-                        .otherwise(pl.lit("aud"))
-                        .alias("context_name")
-                    )
-                    .sort("trial_index")
-                )
-            if trials.n_unique("block_index") != 6:
-                raise NotEnoughBlocksError(
-                    f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data'
-                )
-            logger.debug(f"Got {len(trials)} trials")
+            feature_array = np.array(feature_arrays)
+
+            logger.debug(f"Got feature arrays: {feature_array.shape}")
 
             context_labels = trials["context_name"].to_numpy().squeeze()
 
@@ -460,22 +478,12 @@ def wrap_decoder_helper(
             shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
             logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
 
-            n_units_to_use = params.unit_subsample_size or len(
-                unit_ids
-            )  # if unit_subsample_size is None, use all available
-
-            unit_idx = list(range(0, len(unit_ids)))
-
             for repeat_idx in tqdm.tqdm(
                 range(params.n_repeats),
                 total=params.n_repeats,
                 unit="repeat",
-                desc=f"repeating {structure} | {session_id}",
+                desc=f"repeating {model_label} | {session_id}",
             ):
-
-                sel_unit_idx = random.sample(unit_idx, n_units_to_use)
-
-                logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
 
                 for shift in (
                     *shifts,
@@ -494,20 +502,15 @@ def wrap_decoder_helper(
                         assert (
                             last_trial_index > first_trial_index
                         ), f"{last_trial_index=}, {first_trial_index=}"
-                        assert (
-                            last_trial_index <= spike_counts_array.shape[0]
-                        ), f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
-                        data = spike_counts_array[
-                            first_trial_index:last_trial_index, sorted(sel_unit_idx)
-                        ]
+                        data = feature_array[first_trial_index:last_trial_index, :]
                     else:
                         labels = context_labels
-                        data = spike_counts_array[:, sorted(sel_unit_idx)]
+                        data = feature_array
 
                     assert data.shape == (
                         len(labels),
-                        len(sel_unit_idx),
-                    ), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
+                        len(feature_config.features),
+                    ), f"{data.shape=}, {len(labels)=}, {len(feature_config.features)=}"
                     logger.debug(
                         f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels"
                     )
@@ -556,9 +559,6 @@ def wrap_decoder_helper(
                         # don't save trial indices for all shifts
                         result["trial_indices"] = None
 
-                    result["unit_ids"] = unit_ids.to_numpy()[
-                        sorted(sel_unit_idx)
-                    ].tolist()
                     result["coefs"] = _result["coefs"][0].tolist()
                     result["is_all_trials"] = is_all_trials
                     results.append(result)
@@ -581,12 +581,7 @@ def wrap_decoder_helper(
             pl.DataFrame(results)
             .with_columns(
                 pl.lit(session_id).alias("session_id"),
-                pl.lit(structure).alias("structure"),
-                pl.lit(sorted(electrode_group_names)).alias("electrode_group_names"),
-                pl.lit(params.unit_subsample_size)
-                .alias("unit_subsample_size")
-                .cast(pl.UInt16),
-                pl.lit(params.unit_criteria).alias("unit_criteria"),
+                pl.lit(feature_config.model_label).alias("model_label"),
             )
             .cast(
                 {
@@ -607,5 +602,7 @@ def wrap_decoder_helper(
             )
             # .write_delta(params.data_path.as_posix(), mode='append')
         )
-    logger.info(f"Completed decoding for session {session_id}, structure {structure}")
+    logger.info(
+        f"Completed decoding for session {session_id}, {feature_config.model_label}"
+    )
     # return results
