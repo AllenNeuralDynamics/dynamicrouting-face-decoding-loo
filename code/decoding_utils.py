@@ -243,12 +243,22 @@ def decode_context_with_linear_shift(
     def is_row_in_existing(row):
         return False
 
-    combinations_df = pl.DataFrame(
-        {
-            "session_id": list(session_ids) * len(params.d),
-            "model_label": np.concatenate([[v] * len(session_ids) for v in params.d]),
-        }
-    )
+    if params.test: 
+        params.input_data = ['facial_features', 'facemap']
+        combinations_df = pl.DataFrame(
+            {
+                "session_id": list(session_ids[0]) * len(params.input_data),
+                "model_label": np.concatenate([[v] * len(session_ids[0]) for v in params.input_data]),
+            }
+        )
+
+    else: 
+        combinations_df = pl.DataFrame(
+            {
+                "session_id": list(session_ids) * len(params.input_data),
+                "model_label": np.concatenate([[v] * len(session_ids) for v in params.input_data]),
+            }
+        )
 
     logger.info(f"Processing {len(combinations_df)} unique session/model combinations")
     if params.use_process_pool:
@@ -274,9 +284,9 @@ def decode_context_with_linear_shift(
                 logger.debug(
                     f"Submitted decoding to process pool for session {row['session_id']}, {row['model_label']}"
                 )
-                if params.test:
-                    logger.info("Test mode: exiting after first session")
-                    break
+            if params.test:
+                logger.info("Test mode: exiting after first session")
+                break
             for future in tqdm.tqdm(
                 cf.as_completed(future_to_session),
                 total=len(future_to_session),
