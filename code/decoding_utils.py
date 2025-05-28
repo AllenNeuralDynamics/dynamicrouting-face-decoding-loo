@@ -465,7 +465,7 @@ def wrap_decoder_helper(
                             axis=1,
                         )
                     )
-            feature_array = np.array(feature_arrays)
+            feature_array = np.array(feature_arrays).T
 
             logger.debug(f"Got feature arrays: {feature_array.shape}")
 
@@ -516,6 +516,31 @@ def wrap_decoder_helper(
                     logger.debug(
                         f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels"
                     )
+
+                    # hyperparameter tuning 
+                    reg_values = np.logspace(-4, 4, 9)
+                    rnd_ind = np.random.choice(len(data), int(0.3 * len(data)), replace=False)
+                    data_validation = data[rnd_ind] # randomly select 30% of the trials
+                    labels_validation = labels[rnd_ind]
+                    decoder_validation_accuracy = np.zeros((len(reg_values))) 
+                    for rv, reg_value in enumerate(reg_values): 
+
+                        _result_validation = decoder_helper(
+                            data_validation,
+                            labels_validation,
+                            decoder_type=params.decoder_type,
+                            crossval=params.crossval,
+                            crossval_index=None,
+                            labels_as_index=params.labels_as_index,
+                            train_test_split_input=None,
+                            regularization=params.regularization,
+                            penalty=params.penalty,
+                            solver=params.solver,
+                            n_jobs=None,
+                        )
+                        decoder_validation_accuracy[rv] = _result_validation["balanced_accuracy_test"].item()
+
+                    params.regularization = reg_values[np.nanargmax(decoder_validation_accuracy)]
 
                     _result = decoder_helper(
                         data,
