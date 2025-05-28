@@ -246,7 +246,7 @@ def decode_context_with_linear_shift(
     combinations_df = pl.DataFrame(
         {
             "session_id": list(session_ids) * len(params.d),
-            "model_label": [[v] * len(session_ids) for v in params.d],
+            "model_label": np.concatenate([[v] * len(session_ids) for v in params.d]),
         }
     )
 
