@@ -61,7 +61,7 @@ class FeatureConfig(pydantic.BaseModel):
 
     @property
     def is_table(self) -> bool:
-        return isinstance(self.features[0], int)
+        return not isinstance(self.features[0], int)
 
 
 feature_config_map: dict[str, FeatureConfig] = {
