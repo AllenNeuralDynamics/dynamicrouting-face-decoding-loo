@@ -443,13 +443,13 @@ def wrap_decoder_helper(
             )
             feature_arrays = []
             if feature_config.is_table:
-                array = []
                 for col in feature_config.features:
+                    array = []
                     for a, b in zip(event_times["start"], event_times["stop"]):
                         array.append(
                             df.filter(
                                 pl.col("timestamps").is_between(a, b, closed="left")
-                            ).select(pl.col(f"{col}_xy").median())[0]
+                            )[f"{col}_xy"].median()
                         )
                     feature_arrays.append(array)
             else:
