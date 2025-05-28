@@ -127,7 +127,7 @@ class Params(pydantic_settings.BaseSettings):
     session_table_query: str = (
         "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
     )
-    d: list[str] = pydantic.Field(
+    input_data: list[str] = pydantic.Field(
         default_factory=lambda: [
             "facial_features",
             "ear",
@@ -539,9 +539,9 @@ def wrap_decoder_helper(
                             n_jobs=None,
                         )
                         decoder_validation_accuracy[rv] = _result_validation["balanced_accuracy_test"].item()
-
                     params.regularization = reg_values[np.nanargmax(decoder_validation_accuracy)]
-
+                    
+                    # run test and train
                     _result = decoder_helper(
                         data,
                         labels,
