@@ -1,0 +1,14 @@
+[project]
+name = "dynamicrouting-face-decoding"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dynamic-routing-analysis",
+    "lazynwb>=0.2.54",
+    "pydantic>=2.11.5",
+]
+
+[tool.uv.sources]
+dynamic-routing-analysis = { git = "https://github.com/alleninstitute/dynamic_routing_analysis" }

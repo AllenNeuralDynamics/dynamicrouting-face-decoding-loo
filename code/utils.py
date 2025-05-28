@@ -30,7 +30,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 import polars as pl
 import sklearn
-import pynwb
 import tqdm
 import upath
 import zarr
