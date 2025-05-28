@@ -456,20 +456,21 @@ def wrap_decoder_helper(
                             )[f"{col}_xy"].median()
                         )
                     feature_arrays.append(array)
+                feature_array = np.array(feature_arrays).T
             else:
                 for a, b in zip(event_times["start"], event_times["stop"]):
-                    start_index = timeseries.timestamps.searchsorted(a, side="left")
-                    stop_index = timeseries.timestamps.searchsorted(b, side="right")
+                    start_index = np.searchsorted(timeseries.timestamps[:], a, side="left")
+                    stop_index = np.searchsorted(timeseries.timestamps[:], b, side="right") 
                     feature_arrays.append(
                         np.nanmedian(
                             timeseries.data[
                                 start_index:stop_index,
                                 feature_config.features,
                             ],
-                            axis=1,
+                            axis=0,
                         )
                     )
-            feature_array = np.array(feature_arrays).T
+                feature_array = np.array(feature_arrays)
 
             logger.debug(f"Got feature arrays: {feature_array.shape}")
 
