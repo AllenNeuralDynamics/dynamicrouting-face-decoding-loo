@@ -247,8 +247,8 @@ def decode_context_with_linear_shift(
         params.input_data = ['facial_features', 'facemap']
         combinations_df = pl.DataFrame(
             {
-                "session_id": list(session_ids[0]) * len(params.input_data),
-                "model_label": np.concatenate([[v] * len(session_ids[0]) for v in params.input_data]),
+                "session_id": [session_ids[0]] * len(params.input_data),
+                "model_label": np.concatenate([[v] * len([session_ids[0]]) for v in params.input_data]),
             }
         )
 
