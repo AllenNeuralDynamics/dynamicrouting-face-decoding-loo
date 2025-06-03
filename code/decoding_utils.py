@@ -395,7 +395,8 @@ def wrap_decoder_helper(
         except lazynwb.exceptions.InternalPathError as e: 
             raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, LP features not found in the nwb file. Aborting.") from None
 
-        if (df["timestamps"][-1] < trials["stop_time"][-1]) | (df["timestamps"][1] > trials["start_time"][0]):
+        timestamps = df.select('timestamps').collect()['timestamps']
+        if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
             raise IndexError(f"For session_id {session_id}, Video recordings does not cover the entire task (stopped early/started late). Aborting.") 
             
 
@@ -449,7 +450,10 @@ def wrap_decoder_helper(
             )
         except lazynwb.exceptions.InternalPathError as e: 
             raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, facemap features not found in the nwb file. Aborting.") from None
-
+        
+        if (timeseries.timestamps[-1] < trials["stop_time"][-1]) | (timeseries.timestamps[1] > trials["start_time"][0]):
+            raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (stopped early/started late). Aborting.") 
+            
     for interval_config in params.feature_interval_configs:
         for start, stop in interval_config.intervals:
             # filter df or timeseries to the interval
