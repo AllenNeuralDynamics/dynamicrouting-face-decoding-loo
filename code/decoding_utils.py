@@ -198,6 +198,14 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.250,
                 ),
             ],
+            "quiescent": [
+                BinnedRelativeIntervalConfig(
+                    event_column_name="quiescent_stop_time",
+                    start_time=-1.5,
+                    stop_time=0,
+                    bin_size=1.5,
+                ),
+            ]
         }[self.feature_intervals]
 
     @pydantic.computed_field(repr=False)
