@@ -1,3 +1,4 @@
+from ast import alias
 import datetime
 import os
 import random
@@ -380,8 +381,8 @@ def wrap_decoder_helper(
         raise FileNotFoundError(
             f"NWB file for session {session_id} not found in the datacube directory"
         )
+        
     if feature_config.is_table:
-
         columns = []
         for col in feature_config.features:
             columns.extend(
@@ -392,49 +393,51 @@ def wrap_decoder_helper(
                     f"{col}_likelihood",
                 ]
             )
+    else:
+        columns = ["data"]
+    
+    try:
+        df = lazynwb.scan_nwb(
+            nwb_path,
+            table_path=feature_config.table_path,
+        ).select(*columns, "timestamps")
+    except lazynwb.exceptions.InternalPathError: 
+        raise lazynwb.exceptions.InternalPathError(f"{session_id} | {feature_config.table_path} not found in {nwb_path}") from None
 
-        try:
-            df = lazynwb.scan_nwb(
-                nwb_path,
-                table_path=feature_config.table_path,
-            ).select(*columns, "timestamps")
-        except lazynwb.exceptions.InternalPathError: 
-            raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, LP features not found in the nwb file. Aborting.") from None
-
-        timestamps = df.select('timestamps').collect()['timestamps']
-        if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
-            raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (stopped early/started late). Aborting.") 
-            
-        def process_LP_column(df: pl.DataFrame | pl.LazyFrame, column_name: str):
-            likelihood = pl.col(f"{column_name}_likelihood")
-            temporal_norm = pl.col(f"{column_name}_temporal_norm")
-            x = pl.col(f"{column_name}_x")
-            y = pl.col(f"{column_name}_y")
-            return (
-                df.with_columns(
-                    (np.sqrt(x**2 + y**2)).alias("_xy"),
-                )
-                .with_columns(
-                    pl.when(
-                        (likelihood >= 0.98)
-                        & (
-                            temporal_norm
-                            <= temporal_norm.mean() + 3 * temporal_norm.std()
-                        )
-                    )
-                    .then(pl.col("_xy"))
-                    .otherwise(None)
-                )
-                .with_columns(
-                    pl.col("_xy")
-                    .fill_nan(None)
-                    .interpolate()
-                    .backward_fill()
-                    .forward_fill()
-                    .alias(f"{column_name}_xy"),
-                )
+    timestamps = df.select('timestamps').collect()['timestamps']
+    if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
+        raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (timestamps: [{timestamps[0]}: {timestamps[-1]}], trials: [{trials['start_time'][0]}, {trials['stop_time'][-1]}]). Aborting.")
+        
+    def process_LP_column(df: pl.DataFrame | pl.LazyFrame, column_name: str):
+        likelihood = pl.col(f"{column_name}_likelihood")
+        temporal_norm = pl.col(f"{column_name}_temporal_norm")
+        x = pl.col(f"{column_name}_x")
+        y = pl.col(f"{column_name}_y")
+        return (
+            df.with_columns(
+                (np.sqrt(x**2 + y**2)).alias("_xy"),
             )
-
+            .with_columns(
+                pl.when(
+                    (likelihood >= 0.98)
+                    & (
+                        temporal_norm
+                        <= temporal_norm.mean() + 3 * temporal_norm.std()
+                    )
+                )
+                .then(pl.col("_xy"))
+                .otherwise(None)
+            )
+            .with_columns(
+                pl.col("_xy")
+                .fill_nan(None)
+                .interpolate()
+                .backward_fill()
+                .forward_fill()
+                .alias(f"{column_name}_xy"),
+            )
+        )
+    if feature_config.is_table:
         for col in feature_config.features:
             assert isinstance(
                 col, str
@@ -443,59 +446,26 @@ def wrap_decoder_helper(
                 process_LP_column,
                 column_name=col,
             )
-        df = df.collect()  # type: ignore[assignment]
-
+        data = df.select(pl.concat_list([f"{col}_xy" for col in feature_config.features])).collect().to_numpy()
     else:
-        try: 
-            timeseries = lazynwb.get_timeseries(
-                nwb_path,
-                search_term=feature_config.table_path,
-                exact_path=True,
-                match_all=False,
-            )
-        except lazynwb.exceptions.InternalPathError: 
-            raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, facemap features not found in the nwb file. Aborting.") from None
-        
-        if (timeseries.timestamps[-1] < trials["stop_time"][-1]) | (timeseries.timestamps[1] > trials["start_time"][0]):
-            raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (stopped early/started late). Aborting.") 
-            
+        data = df.select("data").collect().to_numpy()[:, feature_config.features]
+
     for interval_config in params.feature_interval_configs:
         for start, stop in interval_config.intervals:
-            # filter df or timeseries to the interval
+
             event_times = trials.select(
                 start=pl.col(interval_config.event_column_name) + start,
                 stop=pl.col(interval_config.event_column_name) + stop,
             )
-            feature_arrays = []
-            if feature_config.is_table:
-                for col in feature_config.features:
-                    array = []
-                    for a, b in zip(event_times["start"], event_times["stop"]):
-                        array.append(
-                            df.filter(
-                                pl.col("timestamps").is_between(a, b, closed="left")
-                            )[f"{col}_xy"].median() or np.nan
-                        )
-                    feature_arrays.append(array)
-                feature_array = np.array(feature_arrays).T
-                assert ~np.any(np.isnan(feature_array)), f"{session_id} LP features has Nans"
-            else:
-                for a, b in zip(event_times["start"], event_times["stop"]):
-                    start_index = np.searchsorted(timeseries.timestamps[:], a, side="left")
-                    stop_index = np.searchsorted(timeseries.timestamps[:], b, side="right") 
-                    feature_arrays.append(
-                        np.nanmedian(
-                            timeseries.data[
-                                start_index:stop_index,
-                                feature_config.features,
-                            ],
-                            axis=0,
-                        )
-                    )
-                feature_array = np.array(feature_arrays)
-                assert ~np.any(np.isnan(feature_array)), "Facemap has Nans"
-
-            logger.debug(f"Got feature arrays: {feature_array.shape}")
+            
+            arrays = []
+            for start_index, stop_index in zip(event_times["start"], event_times["stop"]):
+                arrays.append(
+                    np.nanmedian(data[start_index:stop_index, :], axis=0)
+                )
+            feature_array = np.array(arrays).T # shape (n_features, n_bins)
+            logger.debug(f"Got feature array: {feature_array.shape}")
+            assert ~np.any(np.isnan(feature_array)), f"{session_id} | NaN values in {feature_config.model_label} feature array for {interval_config.event_column_name}"
 
             context_labels = trials["rewarded_modality"].to_numpy().squeeze()
 
