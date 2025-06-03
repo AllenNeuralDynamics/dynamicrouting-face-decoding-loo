@@ -364,7 +364,7 @@ def wrap_decoder_helper(
                 pl.when(pl.col("block_index").mod(2).eq(random.choice([0, 1])))
                 .then(pl.lit("vis"))
                 .otherwise(pl.lit("aud"))
-                .alias("context_name")
+                .alias("rewarded_modality")
             )
             .sort("trial_index")
         )
@@ -375,6 +375,7 @@ def wrap_decoder_helper(
     logger.debug(f"Got {len(trials)} trials")
 
     if feature_config.is_table:
+
         columns = []
         for col in feature_config.features:
             columns.extend(
@@ -385,10 +386,18 @@ def wrap_decoder_helper(
                     f"{col}_likelihood",
                 ]
             )
-        df = lazynwb.scan_nwb(
-            next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
-            table_path=feature_config.table_path,
-        ).select(*columns, "timestamps")
+
+        try:
+            df = lazynwb.scan_nwb(
+                next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
+                table_path=feature_config.table_path,
+            ).select(*columns, "timestamps")
+        except lazynwb.exceptions.InternalPathError as e: 
+            raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, LP features not found in the nwb file. Aborting.") from None
+
+        if (df["timestamps"][-1] < trials["stop_time"][-1]) | (df["timestamps"][1] > trials["start_time"][0]):
+            raise IndexError(f"For session_id {session_id}, Video recordings does not cover the entire task (stopped early/started late). Aborting.") 
+            
 
         def part_info_LP_all_parts(df: pl.DataFrame | pl.LazyFrame, column_name: str):
             likelihood = pl.col(f"{column_name}_likelihood")
@@ -431,12 +440,15 @@ def wrap_decoder_helper(
         df = df.collect()  # type: ignore[assignment]
 
     else:
-        timeseries = lazynwb.get_timeseries(
-            next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
-            search_term=feature_config.table_path,
-            exact_path=True,
-            match_all=False,
-        )
+        try: 
+            timeseries = lazynwb.get_timeseries(
+                next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
+                search_term=feature_config.table_path,
+                exact_path=True,
+                match_all=False,
+            )
+        except lazynwb.exceptions.InternalPathError as e: 
+            raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, facemap features not found in the nwb file. Aborting.") from None
 
     for interval_config in params.feature_interval_configs:
         for start, stop in interval_config.intervals:
@@ -453,10 +465,11 @@ def wrap_decoder_helper(
                         array.append(
                             df.filter(
                                 pl.col("timestamps").is_between(a, b, closed="left")
-                            )[f"{col}_xy"].median()
+                            )[f"{col}_xy"].median() or np.nan
                         )
                     feature_arrays.append(array)
                 feature_array = np.array(feature_arrays).T
+                assert ~np.any(np.isnan(feature_array)), "LP features has Nans"
             else:
                 for a, b in zip(event_times["start"], event_times["stop"]):
                     start_index = np.searchsorted(timeseries.timestamps[:], a, side="left")
@@ -471,10 +484,11 @@ def wrap_decoder_helper(
                         )
                     )
                 feature_array = np.array(feature_arrays)
+                assert ~np.any(np.isnan(feature_array)), "Facemap has Nans"
 
             logger.debug(f"Got feature arrays: {feature_array.shape}")
 
-            context_labels = trials["context_name"].to_numpy().squeeze()
+            context_labels = trials["rewarded_modality"].to_numpy().squeeze()
 
             max_neg_shift = math.ceil(
                 len(trials.filter(pl.col("block_index") == 0)) / 2
