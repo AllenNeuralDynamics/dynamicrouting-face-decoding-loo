@@ -97,7 +97,36 @@ feature_config_map: dict[str, FeatureConfig] = {
         features=list(range(10)),
     ),
 }
-
+interval_config_presets = {
+    "quiescent_stim_start_response": [
+        BinnedRelativeIntervalConfig(
+            event_column_name="quiescent_stop_time",
+            start_time=-1.5,
+            stop_time=0,
+            bin_size=1.5,
+        ),
+        BinnedRelativeIntervalConfig(
+            event_column_name="stim_start_time",
+            start_time=-2,
+            stop_time=7,
+            bin_size=0.250,
+        ),
+        BinnedRelativeIntervalConfig(
+            event_column_name="response_time",
+            start_time=-3,
+            stop_time=7,
+            bin_size=0.250,
+        ),
+    ],
+    "quiescent": [
+        BinnedRelativeIntervalConfig(
+            event_column_name="quiescent_stop_time",
+            start_time=-1.5,
+            stop_time=0,
+            bin_size=1.5,
+        ),
+    ]
+}
 
 class Params(pydantic_settings.BaseSettings):
     model_config  = pydantic.ConfigDict(protected_namespaces=()) # allow fields that start with `model_`
@@ -156,9 +185,8 @@ class Params(pydantic_settings.BaseSettings):
     trials_filter: str | Expr = pydantic.Field(default_factory=lambda: pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
 
-    feature_intervals: Literal["quiescent_stim_start_response"] = (
-        "quiescent_stim_start_response"
-    )
+    # ensure feature_intervals is a valid preset in `interval_config_presets`
+    feature_intervals: Literal[tuple(interval_config_presets.keys())] = "quiescent_stim_start_response" # type: ignore[valid-type]
 
     @property
     def data_path(self) -> upath.UPath:
@@ -176,36 +204,7 @@ class Params(pydantic_settings.BaseSettings):
     @pydantic.computed_field(repr=False)
     @property
     def feature_interval_configs(self) -> list[BinnedRelativeIntervalConfig]:
-        return {
-            "quiescent_stim_start_response": [
-                BinnedRelativeIntervalConfig(
-                    event_column_name="quiescent_stop_time",
-                    start_time=-1.5,
-                    stop_time=0,
-                    bin_size=1.5,
-                ),
-                BinnedRelativeIntervalConfig(
-                    event_column_name="stim_start_time",
-                    start_time=-2,
-                    stop_time=7,
-                    bin_size=0.250,
-                ),
-                BinnedRelativeIntervalConfig(
-                    event_column_name="response_time",
-                    start_time=-3,
-                    stop_time=7,
-                    bin_size=0.250,
-                ),
-            ],
-            "quiescent": [
-                BinnedRelativeIntervalConfig(
-                    event_column_name="quiescent_stop_time",
-                    start_time=-1.5,
-                    stop_time=0,
-                    bin_size=1.5,
-                ),
-            ]
-        }[self.feature_intervals]
+        return interval_config_presets[self.feature_intervals]
 
     @pydantic.computed_field(repr=False)
     def datacube_version(self) -> str:
