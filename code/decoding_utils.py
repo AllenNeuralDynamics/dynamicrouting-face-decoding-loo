@@ -26,7 +26,8 @@ import pydantic_settings.sources
 import tqdm
 import upath
 import utils
-from dynamic_routing_analysis.decoding_utils import NotEnoughBlocksError, decoder_helper
+from dynamic_routing_analysis.decoding_utils import (NotEnoughBlocksError,
+                                                     decoder_helper)
 
 logger = logging.getLogger(__name__)
 
@@ -373,7 +374,12 @@ def wrap_decoder_helper(
             f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data'
         )
     logger.debug(f"Got {len(trials)} trials")
-
+    
+    nwb_path = next((p for p in utils.get_nwb_paths() if p.stem == session_id), None)
+    if nwb_path is None:
+        raise FileNotFoundError(
+            f"NWB file for session {session_id} not found in the datacube directory"
+        )
     if feature_config.is_table:
 
         columns = []
@@ -389,18 +395,17 @@ def wrap_decoder_helper(
 
         try:
             df = lazynwb.scan_nwb(
-                next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
+                nwb_path,
                 table_path=feature_config.table_path,
             ).select(*columns, "timestamps")
-        except lazynwb.exceptions.InternalPathError as e: 
+        except lazynwb.exceptions.InternalPathError: 
             raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, LP features not found in the nwb file. Aborting.") from None
 
         timestamps = df.select('timestamps').collect()['timestamps']
         if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
-            raise IndexError(f"For session_id {session_id}, Video recordings does not cover the entire task (stopped early/started late). Aborting.") 
+            raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (stopped early/started late). Aborting.") 
             
-
-        def part_info_LP_all_parts(df: pl.DataFrame | pl.LazyFrame, column_name: str):
+        def process_LP_column(df: pl.DataFrame | pl.LazyFrame, column_name: str):
             likelihood = pl.col(f"{column_name}_likelihood")
             temporal_norm = pl.col(f"{column_name}_temporal_norm")
             x = pl.col(f"{column_name}_x")
@@ -435,7 +440,7 @@ def wrap_decoder_helper(
                 col, str
             ), f"Expected string column name in feature config: {feature_config!r}"
             df = df.pipe(
-                part_info_LP_all_parts,
+                process_LP_column,
                 column_name=col,
             )
         df = df.collect()  # type: ignore[assignment]
@@ -443,12 +448,12 @@ def wrap_decoder_helper(
     else:
         try: 
             timeseries = lazynwb.get_timeseries(
-                next((p for p in utils.get_nwb_paths() if p.stem == session_id), None),
+                nwb_path,
                 search_term=feature_config.table_path,
                 exact_path=True,
                 match_all=False,
             )
-        except lazynwb.exceptions.InternalPathError as e: 
+        except lazynwb.exceptions.InternalPathError: 
             raise lazynwb.exceptions.InternalPathError(f"For session_id {session_id}, facemap features not found in the nwb file. Aborting.") from None
         
         if (timeseries.timestamps[-1] < trials["stop_time"][-1]) | (timeseries.timestamps[1] > trials["start_time"][0]):
@@ -473,7 +478,7 @@ def wrap_decoder_helper(
                         )
                     feature_arrays.append(array)
                 feature_array = np.array(feature_arrays).T
-                assert ~np.any(np.isnan(feature_array)), "LP features has Nans"
+                assert ~np.any(np.isnan(feature_array)), f"{session_id} LP features has Nans"
             else:
                 for a, b in zip(event_times["start"], event_times["stop"]):
                     start_index = np.searchsorted(timeseries.timestamps[:], a, side="left")
