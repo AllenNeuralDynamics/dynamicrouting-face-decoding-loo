@@ -446,7 +446,7 @@ def wrap_decoder_helper(
                 process_LP_column,
                 column_name=col,
             )
-        data = df.select(pl.concat_list([f"{col}_xy" for col in feature_config.features])).collect().to_numpy()
+        data = df.select([f"{col}_xy" for col in feature_config.features]).collect().to_numpy()
     else:
         data = df.select("data").collect().to_numpy()[:, feature_config.features]
 
