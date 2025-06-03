@@ -446,9 +446,10 @@ def wrap_decoder_helper(
                 process_LP_column,
                 column_name=col,
             )
-        data = df.select([f"{col}_xy" for col in feature_config.features]).collect().to_numpy()
+        col_names = [f"{col}_xy" for col in feature_config.features]
+        feature_timeseries = df.select(col_names).collect()[col_names].to_numpy()
     else:
-        data = df.select("data").collect().to_numpy()[:, feature_config.features]
+        feature_timeseries = df.select("data").collect()['data'].to_numpy()[:, feature_config.features]
 
     for interval_config in params.feature_interval_configs:
         for start, stop in interval_config.intervals:
@@ -458,14 +459,17 @@ def wrap_decoder_helper(
                 stop=pl.col(interval_config.event_column_name) + stop,
             )
             
-            arrays = []
-            for start_index, stop_index in zip(event_times["start"], event_times["stop"]):
-                arrays.append(
-                    np.nanmedian(data[start_index:stop_index, :], axis=0)
+            binned_features = []
+            for a, b in zip(event_times["start"], event_times["stop"]):
+                start_index = np.searchsorted(timestamps, a, side="left")
+                stop_index = np.searchsorted(timestamps, b, side="right") 
+                binned_features.append(
+                    np.nanmedian(feature_timeseries[start_index:stop_index, :], axis=0)
                 )
-            feature_array = np.array(arrays).T # shape (n_features, n_bins)
-            logger.debug(f"Got feature array: {feature_array.shape}")
+            feature_array = np.array(binned_features) # shape (n_trials, n_features)
+            assert feature_array.shape == (len(trials), len(feature_config.features)), f"{feature_array.shape=} != {len(trials)=}, {len(feature_config.features)=}"
             assert ~np.any(np.isnan(feature_array)), f"{session_id} | NaN values in {feature_config.model_label} feature array for {interval_config.event_column_name}"
+            logger.debug(f"Got feature array: {feature_array.shape}")
 
             context_labels = trials["rewarded_modality"].to_numpy().squeeze()
 
@@ -491,7 +495,10 @@ def wrap_decoder_helper(
                 ):  # None will be a special case using all trials, with no shift
 
                     is_all_trials = shift is None
-                    if not is_all_trials:
+                    if is_all_trials:
+                        labels = context_labels
+                        data = feature_array
+                    else:
                         labels = context_labels[max_neg_shift:-max_pos_shift]
                         first_trial_index = max_neg_shift + shift
                         last_trial_index = len(trials) - max_pos_shift + shift
@@ -503,14 +510,11 @@ def wrap_decoder_helper(
                             last_trial_index > first_trial_index
                         ), f"{last_trial_index=}, {first_trial_index=}"
                         data = feature_array[first_trial_index:last_trial_index, :]
-                    else:
-                        labels = context_labels
-                        data = feature_array
 
                     assert data.shape == (
                         len(labels),
                         len(feature_config.features),
-                    ), f"{data.shape=}, {len(labels)=}, {len(feature_config.features)=}"
+                    ), f"{data.shape=} != {len(labels)=}, {len(feature_config.features)=}"
                     logger.debug(
                         f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels"
                     )
