@@ -58,25 +58,6 @@ def main():
         logger.info("Test mode: using modified set of parameters")
         
     
-    # if session_id is passed as a command line argument, we will only process that session,
-    # otherwise we process all session IDs that match filtering criteria:    
-    session_table = pd.read_parquet(utils.get_datacube_dir() / 'session_table.parquet')
-    session_table['issues']=session_table['issues'].astype(str)
-    session_ids: list[str] = session_table.query(params.session_table_query)['session_id'].values.tolist()
-    logger.debug(f"Found {len(session_ids)} session_ids available for use after filtering")
-    
-    if params.session_id is not None:
-        if params.session_id not in session_ids:
-            logger.warning(f"{params.session_id!r} not in filtered session_ids: exiting")
-            exit()
-        logger.info(f"Using single session_id {params.session_id} provided via command line argument")
-        session_ids = [params.session_id]
-    elif utils.is_pipeline(): 
-        # only one nwb will be available 
-        session_ids = set(session_ids) & set(p.stem for p in utils.get_nwb_paths())
-    else:
-        logger.info(f"Using list of {len(session_ids)} session_ids after filtering")
-    
     upath.UPath('/results/params.json').write_text(params.model_dump_json(indent=4))
     if params.json_path.exists():
         existing_params = json.loads(params.json_path.read_text())
@@ -87,7 +68,7 @@ def main():
         params.json_path.write_text(params.model_dump_json(indent=4))
     
     logger.info(f'starting decode_context_with_linear_shift with {params!r}')
-    decoding_utils.decode_context_with_linear_shift(session_ids=session_ids, params=params)
+    decoding_utils.decode_context_with_linear_shift(params=params)
     
     utils.ensure_nonempty_results_dir()
     logger.info(f"Time elapsed: {time.time() - t0:.2f} s")
