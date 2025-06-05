@@ -1,5 +1,6 @@
 import datetime
 import os
+import pathlib
 import random
 
 os.environ["RUST_BACKTRACE"] = "1"
@@ -19,6 +20,7 @@ from typing import Annotated, Iterable, Literal
 import lazynwb
 import numpy as np
 import polars as pl
+import polars_ds as pds
 import polars._typing
 import pydantic.functional_serializers
 import pydantic_settings
@@ -26,6 +28,7 @@ import pydantic_settings.sources
 import tqdm
 import upath
 import utils
+import functools
 from dynamic_routing_analysis.decoding_utils import (NotEnoughBlocksError,
                                                      decoder_helper)
 
@@ -65,7 +68,7 @@ class FeatureConfig(pydantic.BaseModel):
         return not isinstance(self.features[0], int)
 
 
-feature_config_map: dict[str, FeatureConfig] = {
+FEATURE_CONFIG_MAP: dict[str, FeatureConfig] = {
     "ear": FeatureConfig(
         model_label="ear",
         table_path="processing/behavior/lp_side_camera",
@@ -97,7 +100,7 @@ feature_config_map: dict[str, FeatureConfig] = {
         features=list(range(10)),
     ),
 }
-interval_config_presets = {
+INTERVAL_CONFIG_PRESETS = {
     "quiescent_stim_start_response": [
         BinnedRelativeIntervalConfig(
             event_column_name="quiescent_stop_time",
@@ -138,8 +141,6 @@ class Params(pydantic_settings.BaseSettings):
     # ----------------------------------------------------------------------------------
 
     # Capsule-specific parameters -------------------------------------- #
-    session_id: str | None = pydantic.Field(None, exclude=True, repr=True)
-    """If provided, only process this session_id. Otherwise, process all sessions that match the filtering criteria"""
     run_id: str = pydantic.Field(
         datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     )  # created at runtime: same for all Params instances
@@ -160,11 +161,11 @@ class Params(pydantic_settings.BaseSettings):
     input_data: list[str] = pydantic.Field(
         default_factory=lambda: [
             "facial_features",
-            "ear",
-            "nose",
-            "jaw",
-            "whisker_pad",
             "facemap",
+            # "ear",
+            # "nose",
+            # "jaw",
+            # "whisker_pad",
         ]
     )
     n_repeats: int = 1
@@ -186,7 +187,7 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
 
     # ensure feature_intervals is a valid preset in `interval_config_presets`
-    feature_intervals: Literal[tuple(interval_config_presets.keys())] = "quiescent_stim_start_response" # type: ignore[valid-type]
+    feature_intervals: Literal[tuple(INTERVAL_CONFIG_PRESETS.keys())] = "quiescent_stim_start_response" # type: ignore[valid-type]
 
     @property
     def data_path(self) -> upath.UPath:
@@ -204,7 +205,7 @@ class Params(pydantic_settings.BaseSettings):
     @pydantic.computed_field(repr=False)
     @property
     def feature_interval_configs(self) -> list[BinnedRelativeIntervalConfig]:
-        return interval_config_presets[self.feature_intervals]
+        return INTERVAL_CONFIG_PRESETS[self.feature_intervals]
 
     @pydantic.computed_field(repr=False)
     def datacube_version(self) -> str:
@@ -232,134 +233,165 @@ class Params(pydantic_settings.BaseSettings):
 
 
 # end of run params ------------------------------------------------ #
+def process_lp_feature(df: pl.DataFrame | pl.LazyFrame, column_name: str, use_pca: bool = False):
+    """Filters on temporal_norm and likelihood and appends a new <column_name> column (with None
+    for non-qualifying rows) to the DataFrame, with xy being the Euclidean distance from pixel (0,0)
+    if use_pca=False, or the projection of xy onto the first principle component if use_pca=True."""
+    likelihood = pl.col(f"{column_name}_likelihood")
+    temporal_norm = pl.col(f"{column_name}_temporal_norm")
+    x = pl.col(f"{column_name}_x")
+    y = pl.col(f"{column_name}_y")
+    if use_pca:
+        new_col = pds.principal_components(x, y, k=1, center=True).struct.field('pc1')
+    else:
+        new_col = (x**2 + y**2).sqrt()
+    return (
+        df
+        # filter x and y based on likelihood and temporal_norm:
+        # (do this before PCA so we don't feed in junk)
+        .with_columns(
+            [
+                pl.when(
+                    (likelihood >= 0.98)
+                    & (
+                        temporal_norm
+                        <= temporal_norm.mean() + 3 * temporal_norm.std()
+                    )
+                )
+                .then(x_or_y)
+                .otherwise(None)
+                
+                for x_or_y in [x, y]
+            ]
+        )
+        .with_columns(
+            new_col.alias(column_name),
+        )
+        .with_columns(
+            pl.col(column_name)
+            .fill_nan(None)
+            .interpolate()
+            .backward_fill()
+            .forward_fill()
+            .alias(column_name),
+        )
+    )
+    
+@functools.cache
+def get_lp_df(nwb_paths: tuple[str, ...], feature_col_names: list[str]) -> pl.DataFrame:
+    lf = lazynwb.scan_nwb(nwb_paths, "processing/behavior/lp_side_camera")
+    data_cols = []
+    for feature_col in feature_col_names:
+        lf = lf.pipe(
+            process_lp_feature,
+            column_name=feature_col,
+        )
+        data_cols.append(feature_col)
+    return (
+        lf
+        .with_column(pl.concat_list(data_cols).alias('data'))
+        .select('data', "_nwb_path")
+        .collect()
+    )
+
+@functools.cache
+def get_facemap_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
+    a = []
+    for p in nwb_paths:
+        try:
+            ts = lazynwb.get_timeseries(
+                p,
+                "processing/behavior/facemap_side_camera",
+                exact_path=True,
+                match_all=False,
+            )
+        except KeyError:
+            continue
+            # NOTE number of sessions with facemap and lp may be different
+        a.append(
+            {
+                "data": ts.data[:, :10], # keep top 10 SVDs
+                "timestamps": ts.timestamps[:],
+                "_nwb_path": str(p), # single value will be broadcast when creating pl.DataFrame from the dict
+            }
+        )
+    return pl.concat((pl.DataFrame(x) for x in a), rechunk=True)
+ 
+# Do we want to do all combinations? LP and Facemap only, no need for individual features.  
+# Wont it be less memory intense if we grab data for each session, make the input matrix and then concatenate? For now, lets get everything 
 
 
-def decode_context_with_linear_shift(
-    session_ids: str | Iterable[str],
+def decode_context(
     params: Params,
 ) -> None:
-    if isinstance(session_ids, str):
-        session_ids = [session_ids]
-    session_ids = sorted(set(session_ids))
-
+    
+    # get nwbs to use 
+    session_table = (
+        utils.get_session_table()
+        .filter(
+            'is_production', 'is_video', 'is_task', 
+            ~pl.col('is_opto_perturbation', 'is_injection_perturbation', 'is_opto_control', 'is_injection_control'),
+        )
+    )
+    available_nwb_paths = [p for p in utils.get_nwb_paths() if p.stem in session_table['session_id']]
+    session_table = session_table.join(
+        pl.DataFrame({'session_id': [p.stem for p in available_nwb_paths], 'nwb_path': available_nwb_paths}),
+        on='session_id',
+    )
+    assert not session_table.is_empty(), "No sessions found for the given criteria & available NWBs"
+    
+    templeton_sessions = session_table.filter('is_templeton', 'is_production')
+    dr_sessions = session_table.filter('is_engaged', 'is_good_behavior')
+    # TODO select individual blocks with good behavior, since we no longer need all 6 to do linear shift
+    assert templeton_sessions.join(dr_sessions, on='session_id').is_empty(), "Templeton and DR session IDs should not overlap"
+    
     if params.skip_existing and params.data_path.exists():
-        logger.warning("Skipping existing is ignored!")
-        existing = []
-    else:
-        existing = []
+        logger.warning("Skipping existing is not implemented!")
 
-    def is_row_in_existing(row):
-        return False
-
-    if params.test: 
-        params.input_data = ['facial_features', 'facemap']
-        combinations_df = pl.DataFrame(
-            {
-                "session_id": [session_ids[0]] * len(params.input_data),
-                "model_label": np.concatenate([[v] * len([session_ids[0]]) for v in params.input_data]),
-            }
-        )
-
-    else: 
-        combinations_df = pl.DataFrame(
-            {
-                "session_id": list(session_ids) * len(params.input_data),
-                "model_label": np.concatenate([[v] * len(session_ids) for v in params.input_data]),
-            }
-        )
-
-    logger.info(f"Processing {len(combinations_df)} unique session/model combinations")
-    if params.use_process_pool:
-        session_results: dict[str, list[cf.Future]] = {}
-        future_to_session = {}
-        lock = None  # multiprocessing.Manager().Lock() # or None
-        with cf.ProcessPoolExecutor(
-            max_workers=params.max_workers,
-            mp_context=multiprocessing.get_context("spawn"),
-        ) as executor:
-            for row in combinations_df.iter_rows(named=True):
-                if params.skip_existing and is_row_in_existing(row):
-                    logger.info(f"Skipping {row} - results already exist")
-                    continue
-                future = executor.submit(
-                    wrap_decoder_helper,
-                    params=params,
-                    **row,
-                    lock=lock,
-                )
-                session_results.setdefault(row["session_id"], []).append(future)
-                future_to_session[future] = row["session_id"]
-                logger.debug(
-                    f"Submitted decoding to process pool for session {row['session_id']}, {row['model_label']}"
-                )
-            for future in tqdm.tqdm(
-                cf.as_completed(future_to_session),
-                total=len(future_to_session),
-                unit="model",
-                desc="Decoding",
-            ):
-                session_id = future_to_session[future]
-                if all(future.done() for future in session_results[session_id]):
-                    logger.debug(f"Decoding completed for session {session_id}")
-                    for f in session_results[session_id]:
-                        try:
-                            _ = f.result()
-                        except Exception:
-                            logger.exception(f"{session_id} | Failed:")
-                    logger.info(f"{session_id} | Completed")
-
-    else:  # single-process mode
-        for row in tqdm.tqdm(
-            combinations_df.iter_rows(named=True),
-            total=len(combinations_df),
-            unit="row",
-            desc="decoding",
-        ):
-            if params.skip_existing and is_row_in_existing(row):
-                logger.info(f"Skipping {row} - results already exist")
-                continue
+    for name, sessions in (('Templeton', templeton_sessions), ('DR', dr_sessions)):
+        assert len(sessions) > 0, f"No {name} sessions to use - check filtering criteria"
+        for model_label in params.input_data:
+            logger.info(f"Processing {model_label} for {len(sessions)} {name} sessions")
             try:
                 wrap_decoder_helper(
                     params=params,
-                    **row,
+                    sessions=sessions,
+                    model_label=model_label,
+                    is_templeton=(name.lower() == 'templeton'),
                 )
-            except NotEnoughBlocksError as exc:
-                logger.warning(f'{row["session_id"]} | {exc!r}')
             except Exception:
-                logger.exception(f'{row["session_id"]} | Failed:')
+                logger.exception(f'{name} session processing failed:')
+            
+            if params.test:
+                logger.info(f"Test mode: exiting after {name} sessions")
+                break
 
 
 def wrap_decoder_helper(
     params: Params,
-    session_id: str,
+    sessions: pl.DataFrame,
     model_label: str,
+    is_templeton: bool,
     lock=None,
 ) -> None:
-    logger.debug(f"Getting trials for {session_id}")
-    feature_config = feature_config_map[model_label]
+    logger.debug("Getting trials for all sessions")
+    feature_config = FEATURE_CONFIG_MAP[model_label]
+
     results = []
     trials = (
         utils.get_df("trials", lazy=True)
         .filter(
-            pl.col("session_id") == session_id,
             params.trials_filter,
-            # obs_intervals may affect number of trials available
+            pl.col("session_id").is_in(sessions["session_id"]),
         )
-        .sort("trial_index")
-        .collect()
     )
-    if (
-        trials["block_index"].n_unique() == 1
-        and not (
-            utils.get_df("session").filter(
-                pl.col("session_id") == session_id,
-                pl.col("keywords").list.contains("templeton"),
-            )
-        ).is_empty()
-    ):
-        logger.info(f"Adding dummy context labels for Templeton session {session_id}")
+    # TODO get all data, take one subject out at a time
+
+    if is_templeton:
+        logger.info("Adding dummy context labels for Templeton sessions")
         trials = (
-            trials.with_columns(
+            trials
+            .with_columns(
                 pl.col("start_time")
                 .sub(pl.col("start_time").min().over("session_id"))
                 .truediv(10 * 60)
@@ -374,82 +406,25 @@ def wrap_decoder_helper(
                 .otherwise(pl.lit("aud"))
                 .alias("rewarded_modality")
             )
-            .sort("trial_index")
-        )
-    if trials.n_unique("block_index") != 6:
-        raise NotEnoughBlocksError(
-            f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data'
-        )
-    logger.debug(f"Got {len(trials)} trials")
-    
-    nwb_path = next((p for p in utils.get_nwb_paths() if p.stem == session_id), None)
-    if nwb_path is None:
-        raise FileNotFoundError(
-            f"NWB file for session {session_id} not found in the datacube directory"
         )
         
+    trials = trials.collect().sort("session_id", "trial_index")
+    logger.debug(f"Got {len(trials)} trials")
+        
     if feature_config.is_table:
-        columns = []
-        for col in feature_config.features:
-            columns.extend(
-                [
-                    f"{col}_x",
-                    f"{col}_y",
-                    f"{col}_temporal_norm",
-                    f"{col}_likelihood",
-                ]
-            )
-    else:
-        columns = ["data"]
-    
-    try:
-        df = lazynwb.scan_nwb(
-            nwb_path,
-            table_path=feature_config.table_path,
-        ).select(*columns, "timestamps")
-    except lazynwb.exceptions.InternalPathError: 
-        raise lazynwb.exceptions.InternalPathError(f"{session_id} | {feature_config.table_path} not found in {nwb_path}") from None
 
-    timestamps = df.select('timestamps').collect()['timestamps']
+    # TODO implement dropping sessions without total video coverage for concatenated df         
     if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
         raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (timestamps: [{timestamps[0]}: {timestamps[-1]}], trials: [{trials['start_time'][0]}, {trials['stop_time'][-1]}]). Aborting.")
         
-    def process_LP_column(df: pl.DataFrame | pl.LazyFrame, column_name: str):
-        likelihood = pl.col(f"{column_name}_likelihood")
-        temporal_norm = pl.col(f"{column_name}_temporal_norm")
-        x = pl.col(f"{column_name}_x")
-        y = pl.col(f"{column_name}_y")
-        return (
-            df.with_columns(
-                (np.sqrt(x**2 + y**2)).alias("_xy"),
-            )
-            .with_columns(
-                pl.when(
-                    (likelihood >= 0.98)
-                    & (
-                        temporal_norm
-                        <= temporal_norm.mean() + 3 * temporal_norm.std()
-                    )
-                )
-                .then(pl.col("_xy"))
-                .otherwise(None)
-            )
-            .with_columns(
-                pl.col("_xy")
-                .fill_nan(None)
-                .interpolate()
-                .backward_fill()
-                .forward_fill()
-                .alias(f"{column_name}_xy"),
-            )
-        )
+
     if feature_config.is_table:
         for col in feature_config.features:
             assert isinstance(
                 col, str
             ), f"Expected string column name in feature config: {feature_config!r}"
             df = df.pipe(
-                process_LP_column,
+                process_lp_feature,
                 column_name=col,
             )
         col_names = [f"{col}_xy" for col in feature_config.features]
