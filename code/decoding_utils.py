@@ -9,11 +9,8 @@ os.environ["TOKIO_WORKER_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["RAYON_NUM_THREADS"] = "1"
 
-import concurrent.futures as cf
 import contextlib
 import logging
-import math
-import multiprocessing
 import uuid
 from typing import Annotated, Iterable, Literal
 
@@ -21,7 +18,6 @@ import lazynwb
 import numpy as np
 import polars as pl
 import polars_ds as pds
-import polars._typing
 import pydantic.functional_serializers
 import pydantic_settings
 import pydantic_settings.sources
@@ -29,8 +25,7 @@ import tqdm
 import upath
 import utils
 import functools
-from dynamic_routing_analysis.decoding_utils import (NotEnoughBlocksError,
-                                                     decoder_helper)
+from dynamic_routing_analysis.decoding_utils import decoder_helper
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +182,7 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
 
     # ensure feature_intervals is a valid preset in `interval_config_presets`
-    feature_intervals: Literal[tuple(INTERVAL_CONFIG_PRESETS.keys())] = "quiescent_stim_start_response" # type: ignore[valid-type]
+    feature_intervals: Literal[tuple(INTERVAL_CONFIG_PRESETS.keys())] = "quiescent" # type: ignore[valid-type]
 
     @property
     def data_path(self) -> upath.UPath:
@@ -278,21 +273,23 @@ def process_lp_feature(df: pl.DataFrame | pl.LazyFrame, column_name: str, use_pc
     )
     
 @functools.cache
-def get_lp_df(nwb_paths: tuple[str, ...], feature_col_names: list[str]) -> pl.DataFrame:
+def get_lp_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
+    """Comes with all features in FEATURE_CONFIG_MAP['facial_features']
+    - do (
+        lf
+        .with_columns(pl.concat_list(features).alias('data'))
+        .select('data', "_nwb_path")
+    )
+    """
     lf = lazynwb.scan_nwb(nwb_paths, "processing/behavior/lp_side_camera")
-    data_cols = []
-    for feature_col in feature_col_names:
+    feature_cols = FEATURE_CONFIG_MAP["facial_features"].features
+    for feature_col in feature_cols:
+        
         lf = lf.pipe(
             process_lp_feature,
             column_name=feature_col,
         )
-        data_cols.append(feature_col)
-    return (
-        lf
-        .with_column(pl.concat_list(data_cols).alias('data'))
-        .select('data', "_nwb_path")
-        .collect()
-    )
+    return lf.select(feature_cols).collect()
 
 @functools.cache
 def get_facemap_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
@@ -377,7 +374,6 @@ def wrap_decoder_helper(
     logger.debug("Getting trials for all sessions")
     feature_config = FEATURE_CONFIG_MAP[model_label]
 
-    results = []
     trials = (
         utils.get_df("trials", lazy=True)
         .filter(
@@ -408,90 +404,95 @@ def wrap_decoder_helper(
             )
         )
         
-    trials = trials.collect().sort("session_id", "trial_index")
+    if feature_config.is_table:
+        data_df = (
+            get_lp_df()
+            .with_columns(pl.concat_list(feature_config.features).alias('data'))
+            .select('data', "_nwb_path")
+        )
+    else:
+        data_df = get_facemap_df()    
+    
+    # drop sessions without total video coverage:      
+    video_start_stop_times = (
+        data_df
+        .group_by("_nwb_path")
+        .agg(
+            pl.col('timestamps').min().alias('video_start_time'),
+            pl.col('timestamps').max().alias('video_stop_time'),
+        )
+    )
+    trials: pl.DataFrame = (
+        trials.collect()
+        .join(video_start_stop_times, on="_nwb_path", how="left")
+        .filter(
+            pl.col("video_start_time") <= pl.col("start_time").min().over('_nwb_path'),
+            pl.col("video_stop_time") >= pl.col("stop_time").max().over('_nwb_path'),
+        )
+    )
+    # everything from here on must ensure this alphabetical order of nwb_path and trial_index is preserved
+    trials = trials.sort("_nwb_path", "trial_index")
     logger.debug(f"Got {len(trials)} trials")
         
-    if feature_config.is_table:
+    data_df = data_df.filter(pl.col("_nwb_path").is_in(trials["_nwb_path"].implode()))
 
-    # TODO implement dropping sessions without total video coverage for concatenated df         
-    if (timestamps[-1] < trials["stop_time"][-1]) | (timestamps[1] > trials["start_time"][0]):
-        raise IndexError(f"For session_id {session_id}, video recording does not cover the entire task (timestamps: [{timestamps[0]}: {timestamps[-1]}], trials: [{trials['start_time'][0]}, {trials['stop_time'][-1]}]). Aborting.")
-        
 
-    if feature_config.is_table:
-        for col in feature_config.features:
-            assert isinstance(
-                col, str
-            ), f"Expected string column name in feature config: {feature_config!r}"
-            df = df.pipe(
-                process_lp_feature,
-                column_name=col,
-            )
-        col_names = [f"{col}_xy" for col in feature_config.features]
-        feature_timeseries = df.select(col_names).collect()[col_names].to_numpy()
-    else:
-        feature_timeseries = df.select("data").collect()['data'].to_numpy()[:, feature_config.features]
-
+    results = []
     for interval_config in params.feature_interval_configs:
-        for start, stop in interval_config.intervals:
-
-            event_times = trials.select(
-                start=pl.col(interval_config.event_column_name) + start,
-                stop=pl.col(interval_config.event_column_name) + stop,
-            )
+        for interval_start, interval_stop in interval_config.intervals: # relative times from abs time in event column
             
-            binned_features = []
-            for a, b in zip(event_times["start"], event_times["stop"]):
-                start_index = np.searchsorted(timestamps, a, side="left")
-                stop_index = np.searchsorted(timestamps, b, side="right") 
-                binned_features.append(
-                    np.nanmedian(feature_timeseries[start_index:stop_index, :], axis=0)
+            binned_features = [] # will be list (len = all trials) of np.ndarrays, each with shape (n_features,) 
+            for nwb_path in trials["_nwb_path"].unique(maintain_order=True):
+               
+                event_times = (
+                    trials
+                    .filter(pl.col('_nwb_path') == nwb_path)
+                    .select(
+                        start=pl.col(interval_config.event_column_name) + interval_start,
+                        stop=pl.col(interval_config.event_column_name) + interval_stop,
+                    )
                 )
-            feature_array = np.array(binned_features) # shape (n_trials, n_features)
+        
+                for a, b in zip(event_times["start"], event_times["stop"]):
+                    data = (
+                        data_df
+                        .filter(
+                            pl.col("timestamps").is_between(a, b, closed="left")
+                        )['data'].to_list()
+                    )
+                    binned_features.append(np.nanmedian(data, axis=0)) # shape (n_features,)
+                    
+            feature_array = np.array(binned_features).T
             assert feature_array.shape == (len(trials), len(feature_config.features)), f"{feature_array.shape=} != {len(trials)=}, {len(feature_config.features)=}"
-            assert ~np.any(np.isnan(feature_array)), f"{session_id} | NaN values in {feature_config.model_label} feature array for {interval_config.event_column_name}"
+            assert ~np.any(np.isnan(feature_array)), f"feature array contains Nans"
             logger.debug(f"Got feature array: {feature_array.shape}")
 
             context_labels = trials["rewarded_modality"].to_numpy().squeeze()
 
-            max_neg_shift = math.ceil(
-                len(trials.filter(pl.col("block_index") == 0)) / 2
-            )
-            max_pos_shift = math.floor(
-                len(trials.filter(pl.col("block_index") == 5)) / 2
-            )
-            shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
-            logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
-
-            for repeat_idx in tqdm.tqdm(
-                range(params.n_repeats),
-                total=params.n_repeats,
-                unit="repeat",
-                desc=f"repeating {model_label} | {session_id}",
+            shifts = []
+            repeat_idx = 0
+            for excluded_subject_id in tqdm.tqdm(
+                trials['subject_id'].unique(maintain_order=True),
+                total=trials['subject_id'].unique().height,
+                unit="subject",
+                desc=f"{model_label} for subjects",
             ):
 
                 for shift in (
                     *shifts,
                     None,
                 ):  # None will be a special case using all trials, with no shift
+                    
+                    assert shift is None, 'linear shift not implemented yet'
 
                     is_all_trials = shift is None
-                    if is_all_trials:
-                        labels = context_labels
-                        data = feature_array
-                    else:
-                        labels = context_labels[max_neg_shift:-max_pos_shift]
-                        first_trial_index = max_neg_shift + shift
-                        last_trial_index = len(trials) - max_pos_shift + shift
-                        logger.debug(
-                            f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}"
-                        )
-                        assert first_trial_index >= 0, f"{first_trial_index=}"
-                        assert (
-                            last_trial_index > first_trial_index
-                        ), f"{last_trial_index=}, {first_trial_index=}"
-                        data = feature_array[first_trial_index:last_trial_index, :]
-
+                    train_row_mask = trials.with_row_index().filter(pl.col('subject_id') != excluded_subject_id).select('index').to_list()
+                    test_row_mask = trials.with_row_index().filter(pl.col('subject_id') == excluded_subject_id).select('index').to_list()
+                    
+                    # e.g. 
+                    labels = context_labels[train_row_mask, :]
+                    data = feature_array[train_row_mask, :]
+                    
                     assert data.shape == (
                         len(labels),
                         len(feature_config.features),
@@ -548,10 +549,11 @@ def wrap_decoder_helper(
                     ].item()
                     result["time_aligned_to"] = interval_config.event_column_name
                     result["bin_size"] = interval_config.bin_size
-                    result["bin_center"] = (start + stop) / 2
+                    result["bin_center"] = (interval_start + interval_stop) / 2
                     result["shift_idx"] = shift
                     result["repeat_idx"] = repeat_idx
-
+                    result["excluded_subject_id"] = excluded_subject_id
+                    
                     if shift in (0, None):
                         result["predict_proba"] = _result["predict_proba"][
                             :, np.where(_result["label_names"] == "vis")[0][0]
@@ -591,7 +593,7 @@ def wrap_decoder_helper(
         (
             pl.DataFrame(results)
             .with_columns(
-                pl.lit(session_id).alias("session_id"),
+                pl.lit(is_templeton).alias("is_templeton"),
                 pl.lit(feature_config.model_label).alias("model_label"),
             )
             .cast(
@@ -614,6 +616,6 @@ def wrap_decoder_helper(
             # .write_delta(params.data_path.as_posix(), mode='append')
         )
     logger.info(
-        f"Completed decoding for session {session_id}, {feature_config.model_label}"
+        f"Completed decoding for {feature_config.model_label} ({'templeton' if is_templeton else 'DR'}) with {len(results)} results"
     )
     # return results
