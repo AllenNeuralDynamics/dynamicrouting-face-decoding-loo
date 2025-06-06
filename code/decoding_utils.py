@@ -453,8 +453,7 @@ def wrap_decoder_helper(
             video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
         )
         .filter(
-            pl.col("video_start_time") <= pl.col("start_time").min().over("_nwb_path"),
-            pl.col("video_stop_time") >= pl.col("stop_time").max().over("_nwb_path"),
+            pl.col("video_start_time").lt(pl.col("start_time").min().over("_nwb_path")) & pl.col("video_stop_time").ge(pl.col("stop_time").max().over("_nwb_path")),
         )
     )
 
