@@ -1,4 +1,4 @@
-# hash:sha256:053b6952e31367a176fea407fe79cf0b9a0e1279d39ec74a96be33d1736916d1
+# hash:sha256:ddc15f1bcd34927514d7ba0d2427aa7366fc375b63b0f4a512d5d9f856f1d207
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -33,3 +33,6 @@ RUN pip3 install -U --no-cache-dir \
     universal-pathlib==0.1.4 \
     zarr==2.17.2 \
     -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@ad88479ed99947a17967266f32e4a56843ab9c3e#egg=dynamic-routing-analysis
+
+COPY postInstall /
+RUN /postInstall
