@@ -381,10 +381,6 @@ def decode_context(
                 )
             except Exception:
                 logger.exception(f"{name} session processing failed:")
-
-            if params.test:
-                logger.info("Test mode: exiting after first model_label")
-                break
         if params.test:
             logger.info(f"Test mode: exiting after {name} sessions")
             break
@@ -427,16 +423,17 @@ def wrap_decoder_helper(
             pl.col("rewarded_modality").replace({"vis": 1, "aud": 0}).cast(pl.Int8)
         )
 
+    nwb_paths = tuple(sessions['_nwb_path'].unique().sort()) # paths must be immutable for cached func index
     if feature_config.is_table:
         data_df = (
-            get_lp_df(tuple(sessions['_nwb_path'].unique().sort())) # paths must be immutable for cache index
+            get_lp_df(nwb_paths) # paths must be immutable for cache index
             .with_columns(pl.concat_list(feature_config.features).alias("data"))
             .select("data", "_nwb_path", "timestamps")
             .sort("_nwb_path", "timestamps")
         )
     else:
         assert feature_config.model_label == "facemap", f"{feature_config.model_label=} not implemented"
-        data_df = get_facemap_df().sort("_nwb_path", "timestamps")
+        data_df = get_facemap_df(nwb_paths).sort("_nwb_path", "timestamps")
 
     # drop sessions without total video coverage:
     video_start_stop_times = data_df.group_by("_nwb_path").agg(
