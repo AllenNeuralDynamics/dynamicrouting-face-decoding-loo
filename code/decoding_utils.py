@@ -2,11 +2,11 @@ import datetime
 import os
 import random
 
-os.environ["RUST_BACKTRACE"] = "1"
+# os.environ["RUST_BACKTRACE"] = "1"
 # os.environ['POLARS_MAX_THREADS'] = '1'
-os.environ["TOKIO_WORKER_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["RAYON_NUM_THREADS"] = "1"
+# os.environ["TOKIO_WORKER_THREADS"] = "1"
+# os.environ["OPENBLAS_NUM_THREADS"] = "1"
+# os.environ["RAYON_NUM_THREADS"] = "1"
 
 import contextlib
 import functools
