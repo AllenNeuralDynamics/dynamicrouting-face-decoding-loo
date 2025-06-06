@@ -108,30 +108,5 @@
 			"version": "4.95.3"
 		}
 	},
-	"env_variables": [
-		{
-			"name": "OMP_NUM_THREADS",
-			"value": "1"
-		},
-		{
-			"name": "MKL_NUM_THREADS",
-			"value": "1"
-		},
-		{
-			"name": "OPENBLAS_NUM_THREADS",
-			"value": "1"
-		},
-		{
-			"name": "TOKIO_WORKER_THREADS",
-			"value": "1"
-		},
-		{
-			"name": "RAYON_NUM_THREADS",
-			"value": "1"
-		},
-		{
-			"name": "POLARS_MAX_THREADS",
-			"value": "1"
-		}
-	]
+	"env_variables": []
 }
