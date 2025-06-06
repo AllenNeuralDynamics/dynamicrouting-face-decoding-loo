@@ -448,15 +448,17 @@ def wrap_decoder_helper(
         trials, pl.DataFrame
     ), "Trials should be a DataFrame at this point, after collecting"
     trials = (
-        trials.join(
+        trials
+        .join(
             video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
-        ).filter(
+        )
+        .filter(
             pl.col("video_start_time") <= pl.col("start_time").min().over("_nwb_path"),
             pl.col("video_stop_time") >= pl.col("stop_time").max().over("_nwb_path"),
         )
     )
 
-    # everything from here on must ensure this alphabetical order of nwb_path and trial_index is preserved
+    # everything from here on must ensure this alphabetical order of nwb_path and sequential trial_index is preserved
     trials = trials.sort("_nwb_path", "trial_index")
     logger.debug(f"Got {len(trials)} trials")
 
@@ -468,14 +470,16 @@ def wrap_decoder_helper(
             interval_start,
             interval_stop,
         ) in interval_config.intervals:  # relative times from abs time in event column
-
+            logger.info(
+                f"Getting {model_label} data for {interval_config.event_column_name} ({interval_start=}, {interval_stop=}, {is_templeton})"
+            )  
             binned_features_all_sessions = (
                 []
             )  # will be list (len trials) of np.ndarrays, each with shape (n_features,)
 
             for nwb_path in trials["_nwb_path"].unique(maintain_order=True):
 
-                event_times = trials.filter(pl.col("_nwb_path") == nwb_path).select(
+                event_times = trials.filter(pl.col("_nwb_path") == nwb_path).sort('trial_index').select(
                     start=pl.col(interval_config.event_column_name) + interval_start,
                     stop=pl.col(interval_config.event_column_name) + interval_stop,
                 )
@@ -483,10 +487,14 @@ def wrap_decoder_helper(
                     []
                 )  # will be list of np.ndarrays, each with shape (n_features,)
                 for a, b in zip(event_times["start"], event_times["stop"]):
-                    data = data_df.filter(
-                        pl.col("_nwb_path") == nwb_path,
-                        pl.col("timestamps").is_between(a, b, closed="left"),
+                    data = (
+                        data_df
+                        .filter(
+                            pl.col("_nwb_path") == nwb_path,
+                            pl.col("timestamps").is_between(a, b, closed="left"),
+                        )
                     )["data"].to_list()
+                    assert len(data) > 0, f"No data for {nwb_path=} in {a=} to {b=}"
                     binned_features_this_session.append(
                         np.nanmedian(data, axis=0)
                     )  # shape (n_features,)
@@ -544,6 +552,9 @@ def wrap_decoder_helper(
                     assert len(train_labels) == len(train_data)
                     assert len(test_labels) == len(test_data)
 
+                    logger.info(
+                        f"Running decoder_helper for {model_label} with {len(train_labels)} train trials and {len(test_labels)} test trials"
+                    )
                     # run test and train
                     _result = decoder_helper(
                         train_data=train_data,
@@ -704,7 +715,7 @@ def decoder_helper(
 
         if regularization is None:
             logger.info(
-                "No regularization specified, using hyperparameter tuning to find the best regularization value"
+                "No regularization specified: using hyperparameter tuning to find the best regularization value"
             )
             # hyperparameter tuning
             reg_values = np.logspace(-4, 4, 9)
