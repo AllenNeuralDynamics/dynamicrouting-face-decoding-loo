@@ -526,7 +526,7 @@ def wrap_decoder_helper(
                 binned_features_all_sessions.append(binned_features_this_session)
 
             logger.info(f'Cutting {len(ignore_trials)} trials with no data')
-            trials = trials.with_row_index().filter(~pl.col('index').is_in(ignore_trials))
+            trials = trials.with_row_index().filter(~pl.col('index').is_in(ignore_trials)).drop('index')
             feature_array = np.vstack(binned_features_all_sessions)
             assert len(trials) > 0, 'No trials left'
             assert feature_array.shape == (
@@ -558,20 +558,18 @@ def wrap_decoder_helper(
                     train_row_mask = (
                         trials.with_row_index()
                         .filter(pl.col("subject_id") != excluded_subject_id)
-                        .select("index")
-                        .to_list()
+                        ["index"].to_list()
                     )
                     test_row_mask = (
                         trials.with_row_index()
                         .filter(pl.col("subject_id") == excluded_subject_id)
-                        .select("index")
-                        .to_list()
+                        ["index"].to_list()
                     )
 
                     # e.g.
-                    train_labels = context_labels[train_row_mask, :]
+                    train_labels = context_labels[train_row_mask]
                     train_data = feature_array[train_row_mask, :]
-                    test_labels = context_labels[test_row_mask, :]
+                    test_labels = context_labels[test_row_mask]
                     test_data = feature_array[test_row_mask, :]
 
                     assert len(train_labels) == len(train_data)
@@ -604,35 +602,32 @@ def wrap_decoder_helper(
                     result["shift_idx"] = shift
                     result["repeat_idx"] = repeat_idx
                     result["excluded_subject_id"] = excluded_subject_id
-                    result["train_session_ids"] = trials["session_id"].to_numpy()[
+                    result["train_session_ids"] = trials["session_id"][
                         train_row_mask
-                    ]
-                    result["test_session_ids"] = trials["session_id"].to_numpy()[
+                    ].to_list()
+                    result["test_session_ids"] = trials["session_id"][
                         test_row_mask
-                    ]
+                    ].to_list()
 
                     if shift in (0, None):
-                        result["predict_proba"] = _result.test_predict_proba[
-                            :,
-                            np.where(test_labels == "vis")[0][0],
-                        ].tolist()
+                        result["predict_proba"] = _result.test_predict_proba
                     else:
                         # don't save probabilities from shifts which we won't use
                         result["predict_proba"] = None
 
-                    result["coefs"] = _result["coefs"][0].tolist()
+                    result["coefs"] = _result.coefs
                     result["is_all_trials"] = is_all_trials
+
                     results.append(result)
+
                     if params.test:
                         logger.info(
                             f"Test mode: exiting after first shift for {excluded_subject_id}"
                         )
                         break
-
                 if params.test:
                     logger.info("Test mode: exiting after first subject")
                     break
-
             if params.test:
                 logger.info(
                     f"Test mode: exiting after first bin relative to {interval_config.event_column_name}"
@@ -642,10 +637,17 @@ def wrap_decoder_helper(
             logger.info("Test mode: exiting after first event intervals config")
             break
 
+
     with lock or contextlib.nullcontext():
         logger.info("Writing data")
         (
-            pl.DataFrame(results)
+            pl.DataFrame(
+                results, 
+                schema_overrides={                    
+                    "train_session_ids": pl.List(pl.String),
+                    "test_session_ids": pl.List(pl.String),
+                },
+            )
             .with_columns(
                 pl.lit(is_templeton).alias("is_templeton"),
                 pl.lit(feature_config.model_label).alias("model_label"),
@@ -658,6 +660,7 @@ def wrap_decoder_helper(
                         [c.event_column_name for c in params.feature_interval_configs]
                     ),
                     "coefs": pl.List(pl.Float64),
+
                 }
             )
             .write_parquet(
@@ -665,8 +668,8 @@ def wrap_decoder_helper(
                 compression_level=18,
                 statistics="full",
             )
-            # .write_delta(params.data_path.as_posix(), mode='append')
         )
+        # .write_delta(params.data_path.as_posix(), mode='append')
     logger.info(
         f"Completed decoding for {feature_config.model_label} ({'templeton' if is_templeton else 'DR'}) with {len(results)} results"
     )
@@ -678,9 +681,9 @@ class Result():
 
     balanced_accuracy_test: float
     balanced_accuracy_train: float
-    test_predict_proba: npt.NDArray[np.floating]
-    test_predict: npt.NDArray[str]
-    coefs: npt.NDArray[np.floating]
+    test_predict_proba: list[float]
+    test_predict: list[str]
+    coefs: list[float]
 
 
 def decoder_helper(
@@ -789,6 +792,7 @@ def decoder_helper(
     assert labels_as_index == False, "labels_as_index not implemented"
 
     scaler = sklearn.preprocessing.RobustScaler()
+    scaler.fit(train_data)
     x_train = scaler.transform(train_data)
     clf.fit(x_train, train_labels)
     x_test = scaler.transform(test_data)
@@ -800,6 +804,8 @@ def decoder_helper(
     balanced_accuracy_test = sklearn.metrics.balanced_accuracy_score(
         test_labels, clf.predict(x_test), sample_weight=None, adjusted=False
     )
+    
+    n_unique_labels = len(np.unique(test_labels))
 
     if (
         decoder_type == "LDA"
@@ -808,7 +814,7 @@ def decoder_helper(
     ):
         test_predict_proba = clf.predict_proba(x_test)
     else:
-        test_predict_proba = np.full((len(test_labels),), fill_value=False)
+        test_predict_proba = np.full((len(test_labels), n_unique_labels), fill_value=False)
 
     if (
         decoder_type == "LDA"
@@ -822,7 +828,10 @@ def decoder_helper(
     return Result(
         balanced_accuracy_test=balanced_accuracy_test.item(),
         balanced_accuracy_train=balanced_accuracy_train.item(),
-        test_predict=test_predict,
-        test_predict_proba=test_predict_proba,
-        coefs=coefs,
+        test_predict=test_predict.tolist(),
+        test_predict_proba=test_predict_proba[
+            :,
+            clf.classes_.tolist().index("vis"),
+        ].tolist(),
+        coefs=coefs[0].tolist(),
     )
