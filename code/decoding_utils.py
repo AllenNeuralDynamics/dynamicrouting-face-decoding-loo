@@ -239,9 +239,9 @@ def process_lp_feature(
     x = pl.col(f"{column_name}_x")
     y = pl.col(f"{column_name}_y")
     if use_pca:
-        new_col = pds.principal_components(x, y, k=1, center=True).struct.field("pc1")
+        value_expr = pds.principal_components(x, y, k=1, center=True).struct.field("pc1")
     else:
-        new_col = (x**2 + y**2).sqrt()
+        value_expr = (x**2 + y**2).sqrt()
     return (
         df
         # filter x and y based on likelihood and temporal_norm:
@@ -252,13 +252,14 @@ def process_lp_feature(
                     (likelihood >= 0.98)
                     & (temporal_norm <= temporal_norm.mean() + 3 * temporal_norm.std())
                 )
-                .then(x_or_y)
+                .then(pl.col(f"{column_name}_{xy}"))
                 .otherwise(None)
-                for x_or_y in [x, y]
+                .alias(f"{column_name}_{xy}")
+                for xy in 'xy'
             ]
         )
         .with_columns(
-            new_col.alias(column_name),
+            value_expr.alias(column_name),
         )
         .with_columns(
             pl.col(column_name)
@@ -400,14 +401,14 @@ def wrap_decoder_helper(
     logger.debug("Getting trials for all sessions")
     feature_config = FEATURE_CONFIG_MAP[model_label]
 
-    trials: pl.LazyFrame = utils.get_df("trials", lazy=True).filter(
+    all_trials: pl.LazyFrame = utils.get_df("trials", lazy=True).filter(
         params.trials_filter,
         pl.col("session_id").is_in(sessions["session_id"]),
     )
 
     if is_templeton:
         logger.info("Adding dummy context labels for Templeton sessions")
-        trials = trials.with_columns(
+        all_trials = all_trials.with_columns(
             pl.col("start_time")
             .sub(pl.col("start_time").min().over("session_id"))
             .truediv(10 * 60)
@@ -422,7 +423,7 @@ def wrap_decoder_helper(
             .alias("rewarded_modality")
         )
     if params.labels_as_index:
-        trials = trials.with_columns(
+        all_trials = all_trials.with_columns(
             pl.col("rewarded_modality").replace({"vis": 1, "aud": 0}).cast(pl.Int8)
         )
 
@@ -446,12 +447,12 @@ def wrap_decoder_helper(
         pl.col("_nwb_path").str.split("/").list.get(-1).str.split(".").list.get(0)
     )
 
-    trials = trials.collect()  # type: ignore[assignment]
+    all_trials = all_trials.collect()  # type: ignore[assignment]
     assert isinstance(
-        trials, pl.DataFrame
+        all_trials, pl.DataFrame
     ), "Trials should be a DataFrame at this point, after collecting"
-    trials = (
-        trials
+    all_trials = (
+        all_trials
         .join(
             video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
         )
@@ -460,11 +461,9 @@ def wrap_decoder_helper(
         )
     )
 
-    # everything from here on must ensure this alphabetical order of nwb_path and sequential trial_index is preserved
-    trials = trials.sort("_nwb_path", "trial_index")
-    logger.debug(f"Got {len(trials)} trials")
+    logger.debug(f"Got {len(all_trials)} trials")
 
-    data_df = data_df.filter(pl.col("_nwb_path").is_in(trials["_nwb_path"].implode()))
+    data_df = data_df.filter(pl.col("_nwb_path").is_in(all_trials["_nwb_path"].implode()))
 
     results = []
     for interval_config in params.feature_interval_configs:
@@ -473,22 +472,36 @@ def wrap_decoder_helper(
             interval_stop,
         ) in interval_config.intervals:  # relative times from abs time in event column
             logger.info(
-                f"Getting {model_label} data for {interval_config.event_column_name} ({interval_start=}, {interval_stop=}, {is_templeton})"
+                f"Getting {model_label} data for {interval_config.event_column_name} ({interval_start=}, {interval_stop=}, {is_templeton=})"
             )  
             binned_features_all_sessions = (
                 []
             )  # will be list (len trials) of np.ndarrays, each with shape (n_features,)
 
+            # get a new copy of trials for each interval config so we can cut rows from it if data is missing.
+            # note: everything from here on must ensure this alphabetical order of nwb_path and sequential trial_index is preserved
+            trials = all_trials.sort("_nwb_path", "trial_index")
+
+            trial_idx = -1
+            ignore_trials = []
             for nwb_path in trials["_nwb_path"].unique(maintain_order=True):
 
-                event_times = trials.filter(pl.col("_nwb_path") == nwb_path).sort('trial_index').select(
-                    start=pl.col(interval_config.event_column_name) + interval_start,
-                    stop=pl.col(interval_config.event_column_name) + interval_stop,
+                event_times = (
+                    trials
+                    .filter(pl.col("_nwb_path") == nwb_path)
+                    .sort('trial_index')
+                    .select(
+                        'video_start_time',
+                        'video_stop_time',
+                        start=pl.col(interval_config.event_column_name) + interval_start,
+                        stop=pl.col(interval_config.event_column_name) + interval_stop,
+                    )
                 )
                 binned_features_this_session = (
                     []
                 )  # will be list of np.ndarrays, each with shape (n_features,)
-                for a, b in zip(event_times["start"], event_times["stop"]):
+                for i, (a, b) in enumerate(zip(event_times["start"], event_times["stop"])):
+                    trial_idx += 1
                     data = (
                         data_df
                         .filter(
@@ -496,16 +509,26 @@ def wrap_decoder_helper(
                             pl.col("timestamps").is_between(a, b, closed="left"),
                         )
                     )["data"].to_list()
-                    assert len(data) > 0, f"No data for {nwb_path=} in {a=} to {b=}"
+                    if len(data) == 0 or np.any(np.isnan(data)):
+                        logger.warning(
+                            f"No data for {nwb_path=} in session trial {i}/{len(event_times)} {a=} to {b=}: {event_times['video_start_time'][0]=} | {event_times['video_stop_time'][0]=} | {data_df.filter(pl.col('_nwb_path') == nwb_path)['timestamps'].max()=}"
+                            "\n\t This should not be possible and needs to be investigated - but for now we will accommodate it"
+                        )
+                        ignore_trials.append(trial_idx)
+                        continue
                     binned_features_this_session.append(
                         np.nanmedian(data, axis=0)
                     )  # shape (n_features,)
+
                 # subtract mean for this session
                 binned_features_this_session = np.array(binned_features_this_session)
                 binned_features_this_session = binned_features_this_session - np.nanmean(binned_features_this_session, axis=0)
                 binned_features_all_sessions.append(binned_features_this_session)
 
+            logger.info(f'Cutting {len(ignore_trials)} trials with no data')
+            trials = trials.with_row_index().filter(~pl.col('index').is_in(ignore_trials))
             feature_array = np.vstack(binned_features_all_sessions)
+            assert len(trials) > 0, 'No trials left'
             assert feature_array.shape == (
                 len(trials),
                 len(feature_config.features),
@@ -519,7 +542,7 @@ def wrap_decoder_helper(
             repeat_idx = 0
             for excluded_subject_id in tqdm.tqdm(
                 trials["subject_id"].unique(maintain_order=True),
-                total=trials["subject_id"].unique().height,
+                total=trials["subject_id"].unique().len(),
                 unit="subject",
                 desc=f"{model_label} for subjects",
             ):
