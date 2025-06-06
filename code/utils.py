@@ -35,8 +35,6 @@ import upath
 import zarr
 import polars._typing
 
-import numba_psth
-
 logger = logging.getLogger(__name__)
 
 CO_COMPUTATION_ID = os.environ.get("CO_COMPUTATION_ID")
@@ -471,20 +469,6 @@ def get_per_trial_spike_times(
 
     return results_df
 # analysis ----------------------------------------------------------- #
-def make_psth(
-    spike_times: npt.NDArray[np.floating],
-    start_times: npt.NDArray[np.floating],
-    baseline_dur: float = 0.1,
-    response_dur: float = 1.0,
-    bin_size: float = 0.001,
-    conv_kernel_size: float = 0.01,
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-    if conv_kernel_size < bin_size:
-        raise ValueError(f"PSTH {conv_kernel_size=} must be greater than or equal to {bin_size=}")
-    spike_times = np.array(spike_times, dtype=np.float64)
-    if spike_times.ndim != 1:
-        raise ValueError(f"Expected spike_times to be a 1-d array: got ({spike_times.shape})")
-    return numba_psth.makePSTH(spike_times, np.array(start_times, dtype=np.float64), float(baseline_dur), float(response_dur), float(bin_size), float(conv_kernel_size))
 
 def unit_id_to_session_id(unit_id: str) -> str:
     return unit_id.rpartition("_")[0]

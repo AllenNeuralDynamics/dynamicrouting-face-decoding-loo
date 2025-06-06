@@ -20,6 +20,7 @@ echo Installed $package: $commit_hash
 cd ..
 fi
 
+pip install polars_ds
 # --------------------------------------------------------------------------------
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 python -u run_capsule.py "$@"

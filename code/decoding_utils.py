@@ -9,6 +9,7 @@ import random
 # os.environ["RAYON_NUM_THREADS"] = "1"
 
 import contextlib
+import dataclasses
 import functools
 import logging
 import uuid
@@ -38,7 +39,6 @@ Expr = Annotated[
         lambda expr: expr.meta.serialize(format="json"), return_type=str
     ),
 ]
-
 
 class BinnedRelativeIntervalConfig(pydantic.BaseModel):
     event_column_name: str
@@ -635,8 +635,8 @@ def wrap_decoder_helper(
     )
     # return results
 
-
-class Result(pydantic.BaseModel):
+@dataclasses.dataclass
+class Result():
     """A class to hold the result of the decoder_helper function."""
 
     balanced_accuracy_test: float

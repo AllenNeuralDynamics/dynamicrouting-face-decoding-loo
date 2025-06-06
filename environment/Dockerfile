@@ -1,4 +1,4 @@
-# hash:sha256:10e397d2ecdabe10ffe1f7eedb3d8ffd5a544674e2fe922cec0c1193a2ec6c36
+# hash:sha256:053b6952e31367a176fea407fe79cf0b9a0e1279d39ec74a96be33d1736916d1
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -12,13 +12,6 @@ ARG AWS_SECRET_ACCESS_KEY
 ARG GIT_ASKPASS
 ARG GIT_ACCESS_TOKEN
 COPY git-askpass /
-
-ENV OMP_NUM_THREADS=1
-ENV MKL_NUM_THREADS=1
-ENV OPENBLAS_NUM_THREADS=1
-ENV TOKIO_WORKER_THREADS=1
-ENV RAYON_NUM_THREADS=1
-ENV POLARS_MAX_THREADS=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -39,19 +32,4 @@ RUN pip3 install -U --no-cache-dir \
     scikit-learn==1.5.2 \
     universal-pathlib==0.1.4 \
     zarr==2.17.2 \
-    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@76794ab3e14ff87de13e204dd314449bac623eb2#egg=dynamic-routing-analysis
-
-ADD "https://github.com/coder/code-server/releases/download/v4.95.3/code-server-4.95.3-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
-	
-RUN cd /.code-server \
-    && tar -xvf code-server.tar.gz \
-    && rm code-server.tar.gz \
-    && ln -s /.code-server/code-server-4.95.3-linux-amd64/bin/code-server  /usr/bin/code-server
-
-RUN mkdir -p /.vscode/extensions \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension REditorSupport.R \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension continue.continue \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-python.python \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-toolsai.jupyter \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension reageyao.bioSyntax \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension saoudrizwan.claude-dev
+    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@ad88479ed99947a17967266f32e4a56843ab9c3e#egg=dynamic-routing-analysis
