@@ -340,7 +340,7 @@ def decode_context(
         ),
     )
     available_nwb_paths = [
-        p for p in utils.get_nwb_paths() if p.stem in session_table["session_id"]
+        p.as_posix() for p in utils.get_nwb_paths() if p.stem in session_table["session_id"]
     ]
     session_table = session_table.join(
         pl.DataFrame(
