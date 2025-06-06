@@ -1,4 +1,4 @@
-# hash:sha256:14b3fd5329ca57c3539d46b654c2e05677116cde760efd22ab210519c17f372c
+# hash:sha256:e079feb0d088c6642a035361f65c84723924140f586417f4a57235cf9015b72c
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -33,18 +33,3 @@ RUN pip3 install -U --no-cache-dir \
     universal-pathlib==0.1.4 \
     zarr==2.17.2 \
     -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@ad88479ed99947a17967266f32e4a56843ab9c3e#egg=dynamic-routing-analysis
-
-ADD "https://github.com/coder/code-server/releases/download/v4.95.3/code-server-4.95.3-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
-	
-RUN cd /.code-server \
-    && tar -xvf code-server.tar.gz \
-    && rm code-server.tar.gz \
-    && ln -s /.code-server/code-server-4.95.3-linux-amd64/bin/code-server  /usr/bin/code-server
-
-RUN mkdir -p /.vscode/extensions \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension REditorSupport.R \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension continue.continue \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-python.python \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension ms-toolsai.jupyter \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension reageyao.bioSyntax \
-    && code-server --extensions-dir="/.vscode/extensions" --install-extension saoudrizwan.claude-dev
