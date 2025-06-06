@@ -340,13 +340,13 @@ def decode_context(
         ),
     )
     available_nwb_paths = [
-        p.as_posix() for p in utils.get_nwb_paths() if p.stem in session_table["session_id"]
+        p for p in utils.get_nwb_paths() if p.stem in session_table["session_id"]
     ]
     session_table = session_table.join(
         pl.DataFrame(
             {
                 "session_id": [p.stem for p in available_nwb_paths],
-                "_nwb_path": available_nwb_paths,
+                "_nwb_path": [p.as_posix() for p in available_nwb_paths],
             }
         ),
         on="session_id",
@@ -431,6 +431,7 @@ def wrap_decoder_helper(
             .sort("_nwb_path", "timestamps")
         )
     else:
+        assert feature_config.model_label == "facemap", f"{feature_config.model_label=} not implemented"
         data_df = get_facemap_df().sort("_nwb_path", "timestamps")
 
     # drop sessions without total video coverage:
