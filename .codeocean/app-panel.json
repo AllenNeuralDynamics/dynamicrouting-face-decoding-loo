@@ -20,14 +20,6 @@
 			"value_type": "string"
 		},
 		{
-			"id": "xxVUgdPR32dB7B9H",
-			"name": "session_id",
-			"param_name": "session_id",
-			"description": "Provide a single session ID \u003csubjectID\u003e_\u003cyyyy-mm-dd\u003e (default empty: run for all sessions in datacube)",
-			"type": "text",
-			"value_type": "string"
-		},
-		{
 			"id": "rj6ETIWbYoQJsMqM",
 			"name": "logging_level",
 			"param_name": "logging_level",
@@ -35,15 +27,6 @@
 			"type": "text",
 			"value_type": "string",
 			"default_value": "INFO"
-		},
-		{
-			"id": "CLnGBLMVID8fEr6c",
-			"name": "session_table_query",
-			"param_name": "session_table_query",
-			"description": "Query text to pass to df.query(), for filtering session_table (sessions excluded by filter are not processed)",
-			"type": "text",
-			"value_type": "string",
-			"default_value": "is_ephys \u0026 is_task \u0026 is_annotated \u0026 is_production \u0026 issues=='[]'"
 		},
 		{
 			"id": "5Lq8N5fGlmWi7M3Z",
@@ -83,35 +66,12 @@
 			"default_value": "LogisticRegression"
 		},
 		{
-			"id": "mEO7YbVSqdrSMD9O",
-			"name": "use_process_pool",
-			"param_name": "use_process_pool",
-			"type": "text",
-			"value_type": "integer",
-			"default_value": "1",
-			"maximum": 1
-		},
-		{
-			"id": "RRWkAt4rHoxQdIYU",
-			"name": "max_workers",
-			"param_name": "max_workers",
-			"type": "text",
-			"value_type": "integer"
-		},
-		{
-			"id": "QGCJSR6IiJRCG44R",
-			"name": "n_jobs",
-			"param_name": "n_jobs",
-			"type": "text",
-			"value_type": "integer"
-		},
-		{
 			"id": "HfnBe3exbfyVCqyC",
 			"name": "feature_intervals",
 			"param_name": "feature_intervals",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "quiescent_stim_start_response"
+			"default_value": "quiescent"
 		}
 	]
 }

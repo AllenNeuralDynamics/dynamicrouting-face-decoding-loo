@@ -150,16 +150,8 @@ class Params(pydantic_settings.BaseSettings):
     logging_level: str | int = pydantic.Field("INFO", exclude=True)
     update_packages_from_source: bool = pydantic.Field(False, exclude=True)
     override_params_json: str | None = pydantic.Field("{}", exclude=True)
-    use_process_pool: bool = pydantic.Field(True, exclude=True, repr=True)
-    max_workers: int | None = pydantic.Field(
-        int(os.environ["CO_CPUS"]), exclude=True, repr=True
-    )
-    """For process pool"""
 
     # Decoding parameters ----------------------------------------------- #
-    session_table_query: str = (
-        "is_ephys & is_task & is_annotated & is_production & issues=='[]'"
-    )
     input_data: list[str] = pydantic.Field(
         default_factory=lambda: [
             "facial_features",
@@ -339,6 +331,7 @@ def decode_context(
         "is_production",
         "is_video",
         "is_task",
+        pl.col('issues').list.len() == 0,
         ~pl.col(
             "is_opto_perturbation",
             "is_injection_perturbation",
@@ -584,9 +577,7 @@ def wrap_decoder_helper(
                     if shift in (0, None):
                         result["predict_proba"] = _result.test_predict_proba[
                             :,
-                            np.where(test_labels == "vis")[0][
-                                0
-                            ],  #! TODO what is the second index for?
+                            np.where(test_labels == "vis")[0][0],  #! TODO what is the second index for?
                         ].tolist()
                     else:
                         # don't save probabilities from shifts which we won't use
