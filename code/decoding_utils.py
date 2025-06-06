@@ -447,7 +447,7 @@ def wrap_decoder_helper(
     assert isinstance(
         trials, pl.DataFrame
     ), "Trials should be a DataFrame at this point, after collecting"
-    (
+    trials = (
         trials.join(
             video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
         ).filter(
