@@ -288,7 +288,7 @@ def get_lp_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
             process_lp_feature,
             column_name=feature_col,
         )
-    return lf.select(feature_cols).collect()
+    return lf.select(*feature_cols, "_nwb_path", "timestamps").collect()
 
 
 @functools.cache
@@ -346,7 +346,7 @@ def decode_context(
         pl.DataFrame(
             {
                 "session_id": [p.stem for p in available_nwb_paths],
-                "nwb_path": available_nwb_paths,
+                "_nwb_path": available_nwb_paths,
             }
         ),
         on="session_id",
@@ -425,12 +425,13 @@ def wrap_decoder_helper(
 
     if feature_config.is_table:
         data_df = (
-            get_lp_df()
+            get_lp_df(sessions['_nwb_path'].unique())
             .with_columns(pl.concat_list(feature_config.features).alias("data"))
-            .select("data", "_nwb_path")
+            .select("data", "_nwb_path", "timestamps")
+            .sort("_nwb_path", "timestamps")
         )
     else:
-        data_df = get_facemap_df()
+        data_df = get_facemap_df().sort("_nwb_path", "timestamps")
 
     # drop sessions without total video coverage:
     video_start_stop_times = data_df.group_by("_nwb_path").agg(
