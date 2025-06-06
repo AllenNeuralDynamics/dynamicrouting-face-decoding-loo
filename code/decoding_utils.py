@@ -425,7 +425,7 @@ def wrap_decoder_helper(
 
     if feature_config.is_table:
         data_df = (
-            get_lp_df(sessions['_nwb_path'].unique())
+            get_lp_df(tuple(sessions['_nwb_path'].unique().sort())) # paths must be immutable for cache index
             .with_columns(pl.concat_list(feature_config.features).alias("data"))
             .select("data", "_nwb_path", "timestamps")
             .sort("_nwb_path", "timestamps")
