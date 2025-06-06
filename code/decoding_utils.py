@@ -382,8 +382,11 @@ def decode_context(
                 logger.exception(f"{name} session processing failed:")
 
             if params.test:
-                logger.info(f"Test mode: exiting after {name} sessions")
+                logger.info("Test mode: exiting after first model_label")
                 break
+        if params.test:
+            logger.info(f"Test mode: exiting after {name} sessions")
+            break
 
 
 def wrap_decoder_helper(
