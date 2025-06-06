@@ -444,14 +444,14 @@ def wrap_decoder_helper(
         pl.col("_nwb_path").str.split("/").list.get(-1).str.split(".").list.get(0)
     )
 
-    all_trials = all_trials.collect()  # type: ignore[assignment]
+    all_trials: pl.DataFrame = all_trials.collect()  # type: ignore[assignment]
     assert isinstance(
         all_trials, pl.DataFrame
     ), "Trials should be a DataFrame at this point, after collecting"
     all_trials = (
         all_trials
         .join(
-            video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
+            other=video_start_stop_times, left_on="session_id", right_on=session_id, how="left"
         )
         .filter(
             pl.col("video_start_time").lt(pl.col("start_time").min().over("_nwb_path")) & pl.col("video_stop_time").ge(pl.col("stop_time").max().over("_nwb_path")),
@@ -481,7 +481,7 @@ def wrap_decoder_helper(
 
             trial_idx = -1
             ignore_trials = []
-            for nwb_path in trials["_nwb_path"].unique(maintain_order=True):
+            for nwb_path in tqdm.tqdm(trials["_nwb_path"].unique(maintain_order=True), total=trials["_nwb_path"].n_unique(), unit="nwbs", desc=f"binning {model_label}"):
 
                 event_times = (
                     trials
@@ -494,21 +494,21 @@ def wrap_decoder_helper(
                         stop=pl.col(interval_config.event_column_name) + interval_stop,
                     )
                 )
+                session_data = data_df.filter(pl.col("_nwb_path") == nwb_path)
                 binned_features_this_session = (
                     []
                 )  # will be list of np.ndarrays, each with shape (n_features,)
                 for i, (a, b) in enumerate(zip(event_times["start"], event_times["stop"])):
                     trial_idx += 1
                     data = (
-                        data_df
+                        session_data
                         .filter(
-                            pl.col("_nwb_path") == nwb_path,
                             pl.col("timestamps").is_between(a, b, closed="left"),
                         )
                     )["data"].to_list()
                     if len(data) == 0 or np.any(np.isnan(data)):
                         logger.warning(
-                            f"No data for {nwb_path=} in session trial {i}/{len(event_times)} {a=} to {b=}: {event_times['video_start_time'][0]=} | {event_times['video_stop_time'][0]=} | {data_df.filter(pl.col('_nwb_path') == nwb_path)['timestamps'].max()=}"
+                            f"No data for {nwb_path=} in trial {i}/{len(event_times)} {a=} to {b=}: {event_times['video_start_time'][0]=} | {event_times['video_stop_time'][0]=} | {session_data['timestamps'].max()=}"
                             "\n\t This should not be possible and needs to be investigated - but for now we will accommodate it"
                         )
                         ignore_trials.append(trial_idx)
@@ -563,7 +563,6 @@ def wrap_decoder_helper(
                         ["index"].to_list()
                     )
 
-                    # e.g.
                     train_labels = context_labels[train_row_mask]
                     train_data = feature_array[train_row_mask, :]
                     test_labels = context_labels[test_row_mask]
