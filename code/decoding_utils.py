@@ -491,9 +491,8 @@ def wrap_decoder_helper(
                         np.nanmedian(data, axis=0)
                     )  # shape (n_features,)
                 # subtract mean for this session
-                binned_features_this_session = np.array(
-                    binned_features_this_session
-                ) - np.nanmean(binned_features_this_session, axis=0)
+                binned_features_this_session = np.array(binned_features_this_session)
+                binned_features_this_session = binned_features_this_session - np.nanmean(binned_features_this_session, axis=0)
                 binned_features_all_sessions.append(binned_features_this_session)
 
             feature_array = np.vstack(binned_features_all_sessions)
@@ -579,7 +578,7 @@ def wrap_decoder_helper(
                     if shift in (0, None):
                         result["predict_proba"] = _result.test_predict_proba[
                             :,
-                            np.where(test_labels == "vis")[0][0],  #! TODO what is the second index for?
+                            np.where(test_labels == "vis")[0][0],
                         ].tolist()
                     else:
                         # don't save probabilities from shifts which we won't use
