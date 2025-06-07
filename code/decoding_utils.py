@@ -15,6 +15,7 @@ import logging
 import uuid
 from typing import Annotated, Literal
 
+import altair as alt
 import lazynwb
 import numpy as np
 import numpy.typing as npt
@@ -154,8 +155,8 @@ class Params(pydantic_settings.BaseSettings):
     # Decoding parameters ----------------------------------------------- #
     input_data: list[str] = pydantic.Field(
         default_factory=lambda: [
-            "facial_features",
             "facemap",
+            "facial_features",
             # "ear",
             # "nose",
             # "jaw",
@@ -163,6 +164,7 @@ class Params(pydantic_settings.BaseSettings):
         ]
     )
     n_repeats: int = 1
+    lp_pca: bool = True
     crossval: Literal["5_fold", "blockwise"] = "5_fold"
     """blockwise untested with linear shift"""
     labels_as_index: bool = False
@@ -187,7 +189,7 @@ class Params(pydantic_settings.BaseSettings):
     def data_path(self) -> upath.UPath:
         """Path to delta lake on S3"""
         return (
-            upath.UPath("s3://aind-scratch-data/dynamic-routing/face-decoding/results")
+            upath.UPath("s3://aind-scratch-data/dynamic-routing/face-decoding-loo/results")
             / f"{'_'.join([self.result_prefix, self.run_id])}"
         )
 
@@ -288,34 +290,39 @@ def get_lp_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
         lf = lf.pipe(
             process_lp_feature,
             column_name=feature_col,
+            use_pca=True,
         )
     return lf.select(*feature_cols, "_nwb_path", "timestamps").collect()
 
 
 @functools.cache
-def get_facemap_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
-    a = []
-    for p in nwb_paths:
-        try:
-            ts = lazynwb.get_timeseries(
-                p,
-                "processing/behavior/facemap_side_camera",
-                exact_path=True,
-                match_all=False,
+def get_facemap_df(nwb_paths: tuple[str, ...], n_svds: int | None = None) -> pl.DataFrame:
+    if n_svds:
+        a = []
+        for p in nwb_paths:
+            try:
+                ts = lazynwb.get_timeseries(
+                    p,
+                    "processing/behavior/facemap_side_camera",
+                    exact_path=True,
+                    match_all=False,
+                )
+            except KeyError:
+                continue
+                # NOTE number of sessions with facemap and lp may be different
+            timestamps = ts.timestamps[:]
+            a.append(
+                {
+                    "data": ts.data[:, :n_svds],  # SVDs are second dim
+                    "timestamps": timestamps - np.nanmean(timestamps),
+                    "_nwb_path": str(p),  
+                    # single path value will be broadcast when creating pl.DataFrame from dict
+                }
             )
-        except KeyError:
-            continue
-            # NOTE number of sessions with facemap and lp may be different
-        a.append(
-            {
-                "data": ts.data[:, :10],  # keep top 10 SVDs
-                "timestamps": ts.timestamps[:],
-                "_nwb_path": str(
-                    p
-                ),  # single value will be broadcast when creating pl.DataFrame from the dict
-            }
-        )
-    return pl.concat((pl.DataFrame(x) for x in a), rechunk=True)
+        return pl.concat((pl.DataFrame(x) for x in a), rechunk=True)
+    else:
+        return lazynwb.scan_nwb(nwb_paths, "processing/behavior/facemap_side_camera").collect()
+        # TODO mean-center
 
 
 # Do we want to do all combinations? LP and Facemap only, no need for individual features.
@@ -366,7 +373,7 @@ def decode_context(
     if params.skip_existing and params.data_path.exists():
         logger.warning("Skipping existing is not implemented!")
 
-    for name, sessions in (("Templeton", templeton_sessions), ("DR", dr_sessions)):
+    for name, sessions in (("DR", dr_sessions), ("Templeton", templeton_sessions)):
         assert (
             len(sessions) > 0
         ), f"No {name} sessions to use - check filtering criteria"
@@ -384,7 +391,17 @@ def decode_context(
         if params.test:
             logger.info(f"Test mode: exiting after {name} sessions")
             break
-
+    chart = (
+        pl.read_parquet(f"{params.data_path}/")
+        .plot.boxplot(
+            x=alt.X('balanced_accuracy_test').scale(domain=(0, 1)), 
+            y=alt.Y('model_label').scale(reverse=True), 
+            color='is_templeton',
+        )
+        .properties(title='face decoding with leave-one-subject-out')
+    )
+    chart.save('/results/boxplot.html')
+    chart.save('/results/boxplot.png', scale_factor=3)
 
 def wrap_decoder_helper(
     params: Params,
@@ -433,7 +450,7 @@ def wrap_decoder_helper(
         )
     else:
         assert feature_config.model_label == "facemap", f"{feature_config.model_label=} not implemented"
-        data_df = get_facemap_df(nwb_paths).sort("_nwb_path", "timestamps")
+        data_df = get_facemap_df(nwb_paths, n_svds=len(feature_config.features)).sort("_nwb_path", "timestamps")
 
     # drop sessions without total video coverage:
     video_start_stop_times = data_df.group_by("_nwb_path").agg(
