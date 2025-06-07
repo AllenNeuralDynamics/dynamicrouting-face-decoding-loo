@@ -246,8 +246,12 @@ def process_lp_feature(
         value_expr = (x**2 + y**2).sqrt()
     return (
         df
+        #TODO add some sort of scaling of xy with limits before calculating value
+        .with_columns(
+            value_expr.alias(column_name),
+        )
         # filter x and y based on likelihood and temporal_norm:
-        # (do this before PCA so we don't feed in junk)
+        # (can't do this before PCA as it crashes on nulls)
         .with_columns(
             [
                 pl.when(
@@ -259,9 +263,6 @@ def process_lp_feature(
                 .alias(f"{column_name}_{xy}")
                 for xy in 'xy'
             ]
-        )
-        .with_columns(
-            value_expr.alias(column_name),
         )
         .with_columns(
             pl.col(column_name)
