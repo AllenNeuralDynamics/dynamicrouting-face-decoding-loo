@@ -58,7 +58,6 @@ def main():
     if params.test:
         params = Params(
             result_prefix=f"test/{params.result_prefix}",
-            input_data=['facial_features'],
         )
         logger.info("Test mode: using modified set of parameters")
 

@@ -247,9 +247,6 @@ def process_lp_feature(
     return (
         df
         #TODO add some sort of scaling of xy with limits before calculating value
-        .with_columns(
-            value_expr.alias(column_name),
-        )
         # filter x and y based on likelihood and temporal_norm:
         # (can't do this before PCA as it crashes on nulls)
         .with_columns(
@@ -259,10 +256,13 @@ def process_lp_feature(
                     & (temporal_norm <= temporal_norm.mean() + 3 * temporal_norm.std())
                 )
                 .then(pl.col(f"{column_name}_{xy}"))
-                .otherwise(None)
+                .otherwise(pl.col(f"{column_name}_{xy}").mean())
                 .alias(f"{column_name}_{xy}")
                 for xy in 'xy'
             ]
+        )
+        .with_columns(
+            value_expr.alias(column_name),
         )
         .with_columns(
             pl.col(column_name)
@@ -276,7 +276,7 @@ def process_lp_feature(
 
 
 @functools.cache
-def get_lp_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
+def get_lp_df(nwb_paths: tuple[str, ...], use_pca: bool) -> pl.DataFrame:
     """Comes with all features in FEATURE_CONFIG_MAP['facial_features']
     - do (
         lf
@@ -291,7 +291,7 @@ def get_lp_df(nwb_paths: tuple[str, ...]) -> pl.DataFrame:
         lf = lf.pipe(
             process_lp_feature,
             column_name=feature_col,
-            use_pca=True,
+            use_pca=use_pca,
         )
     return lf.select(*feature_cols, "_nwb_path", "timestamps").collect()
 
@@ -311,16 +311,17 @@ def get_facemap_df(nwb_paths: tuple[str, ...], n_svds: int | None = None) -> pl.
             except KeyError:
                 continue
                 # NOTE number of sessions with facemap and lp may be different
-            timestamps = ts.timestamps[:]
+            data = ts.data[:, :n_svds]
+            data = data - np.nanmean(data, axis=0)  # mean-center SVDs
             a.append(
                 {
-                    "data": ts.data[:, :n_svds],  # SVDs are second dim
-                    "timestamps": timestamps - np.nanmean(timestamps),
+                    "data": data,  
+                    "timestamps": ts.timestamps[:],
                     "_nwb_path": str(p),  
                     # single path value will be broadcast when creating pl.DataFrame from dict
                 }
             )
-        return pl.concat((pl.DataFrame(x) for x in a), rechunk=True)
+        return pl.concat((pl.DataFrame(x) for x in a))
     else:
         return lazynwb.scan_nwb(nwb_paths, "processing/behavior/facemap_side_camera").collect()
         # TODO mean-center
@@ -374,7 +375,10 @@ def decode_context(
     if params.skip_existing and params.data_path.exists():
         logger.warning("Skipping existing is not implemented!")
 
-    for name, sessions in (("DR", dr_sessions), ("Templeton", templeton_sessions)):
+    for name, sessions in (
+        ("Templeton", templeton_sessions),
+        ("DR", dr_sessions), 
+):
         assert (
             len(sessions) > 0
         ), f"No {name} sessions to use - check filtering criteria"
@@ -444,7 +448,7 @@ def wrap_decoder_helper(
     nwb_paths = tuple(sessions['_nwb_path'].unique().sort()) # paths must be immutable for cached func index
     if feature_config.is_table:
         data_df = (
-            get_lp_df(nwb_paths) # paths must be immutable for cache index
+            get_lp_df(nwb_paths, use_pca=params.lp_pca) # paths must be immutable for cache index
             .with_columns(pl.concat_list(feature_config.features).alias("data"))
             .select("data", "_nwb_path", "timestamps")
             .sort("_nwb_path", "timestamps")
