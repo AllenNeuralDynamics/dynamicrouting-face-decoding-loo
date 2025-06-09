@@ -241,7 +241,7 @@ def process_lp_feature(
     x = pl.col(f"{column_name}_x")
     y = pl.col(f"{column_name}_y")
     if use_pca:
-        value_expr = pds.principal_components(x, y, k=1, center=True).struct.field("pc1")
+        value_expr = pds.principal_components(x.drop_nulls(), y.drop_nulls(), k=1, center=True).struct.field("pc1")
     else:
         value_expr = (x**2 + y**2).sqrt()
     return (
@@ -255,14 +255,17 @@ def process_lp_feature(
                     (likelihood >= 0.98)
                     & (temporal_norm <= temporal_norm.mean() + 3 * temporal_norm.std())
                 )
-                .then(pl.col(f"{column_name}_{xy}"))
-                .otherwise(pl.col(f"{column_name}_{xy}").mean())
-                .alias(f"{column_name}_{xy}")
-                for xy in 'xy'
+                .then(pl.col(xy))
+                .otherwise(None)
+                .alias(xy)
+                for xy in (f"{column_name}_x", f"{column_name}_y")
             ]
         )
         .with_columns(
-            value_expr.alias(column_name),
+            pl.when(pl.col(f"{column_name}_x").is_not_null() & pl.col(f"{column_name}_y").is_not_null())
+            .then(value_expr)
+            .otherwise(None)
+            .alias(column_name),
         )
         .with_columns(
             pl.col(column_name)
