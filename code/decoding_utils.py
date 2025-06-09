@@ -246,20 +246,9 @@ def process_lp_feature(
         value_expr = (x**2 + y**2).sqrt()
     return (
         df
-        #TODO add some sort of scaling of xy with limits before calculating value
-        # filter x and y based on likelihood and temporal_norm:
-        # (can't do this before PCA as it crashes on nulls)
-        .with_columns(
-            [
-                pl.when(
-                    (likelihood >= 0.98)
-                    & (temporal_norm <= temporal_norm.mean() + 3 * temporal_norm.std())
-                )
-                .then(pl.col(xy))
-                .otherwise(None)
-                .alias(xy)
-                for xy in (f"{column_name}_x", f"{column_name}_y")
-            ]
+        .filter(
+            likelihood >= 0.98,
+            temporal_norm <= (temporal_norm.mean() + 3 * temporal_norm.std()),
         )
         .with_columns(
             pl.when(pl.col(f"{column_name}_x").is_not_null() & pl.col(f"{column_name}_y").is_not_null())
@@ -278,7 +267,7 @@ def process_lp_feature(
     )
 
 
-@functools.cache
+# @functools.cache
 def get_lp_df(nwb_paths: tuple[str, ...], use_pca: bool) -> pl.DataFrame:
     """Comes with all features in FEATURE_CONFIG_MAP['facial_features']
     - do (
@@ -289,8 +278,9 @@ def get_lp_df(nwb_paths: tuple[str, ...], use_pca: bool) -> pl.DataFrame:
     """
     lf = lazynwb.scan_nwb(nwb_paths, "processing/behavior/lp_side_camera")
     feature_cols = FEATURE_CONFIG_MAP["facial_features"].features
+    lf = lf.collect() #! for testing
     for feature_col in feature_cols:
-
+        assert isinstance(feature_col, str)
         lf = lf.pipe(
             process_lp_feature,
             column_name=feature_col,
