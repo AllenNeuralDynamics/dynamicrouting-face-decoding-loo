@@ -400,7 +400,9 @@ def decode_context(
             logger.info(f"Test mode: exiting after {name} sessions")
             break
     chart = (
-        pl.read_parquet(f"{params.data_path}/")
+        pl.scan_parquet(f"{params.data_path}/")
+        .select('balanced_accuracy_test', 'model_label', 'is_templeton')
+        .collect()
         .plot.boxplot(
             x=alt.X('balanced_accuracy_test').scale(domain=(0, 1)), 
             y=alt.Y('model_label').scale(reverse=True), 
